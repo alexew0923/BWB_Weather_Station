@@ -18,6 +18,7 @@ Trasmitter
 - Waterproof Ultrasonic Sensor (snow depth)
 - Conformal Coating
 - 3D printed Stevenson Screen
+- 2" 4' PCB Pipe (to place the weather station on top of the pipe in order to prevent ground heat)
 
 Receiver
 - ESP32
