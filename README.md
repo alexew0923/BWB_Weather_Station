@@ -17,3 +17,10 @@ Trasmitter
 - Rain Sensor (functions similar to the soil moisture sensor)
 - Waterproof Ultrasonic Sensor (snow depth)
 - Conformal Coating
+- 3D printed Stevenson Screen
+
+Receiver
+- ESP32
+- Solderless Breadboard
+- NRF24L01 (wireless transceiver module with antenna)
+- Carboard Case
