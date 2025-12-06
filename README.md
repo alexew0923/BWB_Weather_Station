@@ -2,7 +2,7 @@
 This repository has information on the weather station built by Better with Bees and Robotics called the MONITOR.
 
 # Components Used
-Trasmitter
+##Trasmitter
 - ESP32
 - Perfboard
 - 5V 1W Solar Panel
@@ -20,8 +20,11 @@ Trasmitter
 - 3D printed Stevenson Screen
 - 2" 4' PCB Pipe (to place the weather station on top of the pipe in order to prevent ground heat)
 
-Receiver
+##Receiver
 - ESP32
 - Solderless Breadboard
 - NRF24L01 (wireless transceiver module with antenna)
 - Carboard Case
+
+#Circuit Diagram
+![Screenshot of a comment on a GitHub issue showing an image, added in the Markdown, of an Octocat smiling and raising a tentacle.][(https://myoctocat.com/assets/images/base-octocat.svg](https://github.com/alexew0923/BWB_Weather_Station/blob/main/weather_station_circuit.png))
