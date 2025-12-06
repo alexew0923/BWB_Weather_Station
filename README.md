@@ -27,4 +27,4 @@ This repository has information on the weather station built by Better with Bees
 - Carboard Case
 
 # Circuit Diagram
-![Circuit Diagram of the Weather Station][(https://myoctocat.com/assets/images/base-octocat.svg](/assets/images/weather_station_circuit.png))
+![Circuit Diagram of the Weather Station](/assets/images/weather_station_circuit.png)
