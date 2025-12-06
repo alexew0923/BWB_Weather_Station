@@ -27,4 +27,4 @@ This repository has information on the weather station built by Better with Bees
 - Carboard Case
 
 # Circuit Diagram
-![Circuit Diagram of the Weather Station](weather_station_circuit.png)
+<img src="https://github.com/alexew0923/BWB_Weather_Station/blob/main/weather_station_circuit.png" width=50% height=50%>
