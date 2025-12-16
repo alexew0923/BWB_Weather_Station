@@ -37,8 +37,18 @@ This repository has information on the weather station built by Charles P. Allen
 <img src="https://github.com/alexew0923/BWB_Weather_Station/blob/main/circuit_diagrams/weather_station_receiver_circuit.png" width=30% height=30%>
 
 # How It Works
-1. The weather station located outside will collect meteorological data such as temperature, humidity, air pressure, soil moisture, rain value and snow depth.
+1. The weather station located outside will collect meteorological data every 5 minutes such as temperature, humidity, air pressure, soil moisture, rain value and snow depth.
 2. The data is transmitted to the receiver at school via NRF24L01.
 3. The receiver module receives the data and uploads it on Google Sheets through Apps Script web app.
 4. Apps Script process data each night to convert them into daily averages and archives the old data.
 5. Google Sheets creates different graphs and publish it on betterwithbees.ca.
+
+# Maintenance
+1. Visit the weather station after it snowed to clear the remaining snow on the solar panel and rain sensor.
+
+# Troubleshooting
+## No Data Is Being Received
+1. Between 3pm to 4pm on weekdays, the data is not transmitted due to the noise from the school bus radios.
+2. Go to the "Executions" page on Apps Script and see the recent time doGet function was executed.
+3. Check if the receiver is unplugged.
+4. Check if the transmitter is turned on by glancing at it for light up LED on ESP32. Cover the solar panel beforehand because another LED lights up when the solar panel is active.
