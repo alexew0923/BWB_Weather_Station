@@ -47,6 +47,7 @@ This repository has information on the weather station built by Charles P. Allen
 1. Visit the weather station after it snowed to clear the remaining snow on the solar panel and rain sensor.
 
 # Troubleshooting
+Go through the list in order to troubleshoot the problem.
 ## No Data Is Being Received
 1. Between 3pm to 4pm on weekdays, the data is not transmitted due to the noise from the school bus radios.
 2. Go to the "Executions" page on Apps Script and see the recent time doGet function was executed.
