@@ -23,7 +23,7 @@ const char* ssid = "HighSchool_Public";         // change SSID according to the 
 const char* password = "love2learn";    // change password
 
 // Google script ID and required credentials
-String GOOGLE_SCRIPT_ID = "AKfycbz_WRI0PCKUYY_S8jyYQuT8cFlfZiAVcb7ddkgc7Mz9nN4KfXZkUcGenzFLliQWBrY";    // change Gscript ID
+String GOOGLE_SCRIPT_ID = "AKfycbxcMIr2qUmgZoe8sewoufk-KnCAl7qqSj04frDSQsq35S2GecS2qpXnmr1ZgSe5y12s";    // change Gscript ID
 
 void setup() {
   Serial.begin(9600);
