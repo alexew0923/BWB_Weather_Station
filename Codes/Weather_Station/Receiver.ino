@@ -7,7 +7,7 @@
 RF24 radio(4, 5); // CE, CSN
 const byte address[6] = "00001";
 
-struct SensorPacket {
+struct SensorPacket { //new Structure to Store Data
     float temperature;
     float humidity;
     int soil;
@@ -19,10 +19,11 @@ struct SensorPacket {
 SensorPacket receivedData;
 
 // WiFi credentials
-const char* ssid = "HighSchool_Public";         // change SSID
+const char* ssid = "HighSchool_Public";         // change SSID according to the scool WiFi
 const char* password = "love2learn";    // change password
+
 // Google script ID and required credentials
-String GOOGLE_SCRIPT_ID = "AKfycbw-Imw_tREJt55vgcxns3K6qF6R21QOZW4tNe3MwQtw2Ql6WUo5ioBKTGESXjLFZ6hk";    // change Gscript ID
+String GOOGLE_SCRIPT_ID = "AKfycbz_WRI0PCKUYY_S8jyYQuT8cFlfZiAVcb7ddkgc7Mz9nN4KfXZkUcGenzFLliQWBrY";    // change Gscript ID
 
 void setup() {
   Serial.begin(9600);
@@ -30,7 +31,7 @@ void setup() {
   Serial.print("Connecting to wifi: ");
   Serial.println(ssid);
   Serial.flush();
-  WiFi.begin(ssid, password);
+  WiFi.begin(ssid, password); //connect to WiFi
   while (WiFi.status() != WL_CONNECTED) {
     Serial.print(".");
     Serial.print(WiFi.status());
@@ -38,7 +39,7 @@ void setup() {
   }
   Serial.println("");
 
-  radio.begin();
+  radio.begin(); //Star NRF24L01
   radio.openReadingPipe(0, address);
   radio.setPALevel(RF24_PA_MAX);
   radio.startListening();
@@ -47,8 +48,8 @@ void setup() {
 void loop() {
   if (radio.available()) {
     Serial.println("success!");
-    radio.read(&receivedData, sizeof(receivedData));
-    Serial.print("Temp: "); Serial.print(receivedData.temperature);
+    radio.read(&receivedData, sizeof(receivedData)); //listen to incoming transmission
+    Serial.print("Temp: "); Serial.print(receivedData.temperature); //serial print for debugging purpose
     Serial.print(", Hum: "); Serial.print(receivedData.humidity);
     Serial.print(", Soil: "); Serial.print(receivedData.soil);
     Serial.print(", Pressure: "); Serial.print(receivedData.pressure);
@@ -58,7 +59,7 @@ void loop() {
 
     if (WiFi.status() == WL_CONNECTED) {
       static bool flag = false;
-      String urlFinal = "https://script.google.com/macros/s/"+GOOGLE_SCRIPT_ID+"/exec?"+"temp=" + receivedData.temperature + "&hum=" + receivedData.humidity + "&soil=" + receivedData.soil + "&air=" + receivedData.pressure + "&rain=" + receivedData.rain + "&snow=" + receivedData.snow + "&count=" + receivedData.bootCount;
+      String urlFinal = "https://script.google.com/macros/s/"+GOOGLE_SCRIPT_ID+"/exec?"+"temp=" + receivedData.temperature + "&hum=" + receivedData.humidity + "&soil=" + receivedData.soil + "&air=" + receivedData.pressure + "&rain=" + receivedData.rain + "&snow=" + receivedData.snow + "&count=" + receivedData.bootCount; //URL for web app
       Serial.print("POST data to spreadsheet:");
       Serial.println(urlFinal);
       HTTPClient http;
