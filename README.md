@@ -1,5 +1,5 @@
 # BWB_Weather_Station
-This repository has information on the weather station built by Charles P. Allen High School's Robotics Club in collaboration with Better with Bees. This project is not 100% complete, so if you are referring to this project to build your own weather station, take note that it might not work the same.
+This repository has information on the weather station built by Charles P. Allen High School's Robotics Club in collaboration with Better with Bees. This project is not 100% complete, so if you are referring to this project to build your own weather station, take note that it might not work the same. You check the output from the weather station on BWB club website, betterwithbees.ca.
 
 # Components Used
 ## Trasmitter
@@ -34,4 +34,11 @@ This repository has information on the weather station built by Charles P. Allen
 <img src="https://github.com/alexew0923/BWB_Weather_Station/blob/main/circuit_diagrams/weather_station_circuit.png" width=50% height=50%>
 
 ## Receiver
-<img src="https://github.com/alexew0923/BWB_Weather_Station/blob/main/circuit_diagrams/weather_station_receiver_circuit.png" width=40% height=40%>
+<img src="https://github.com/alexew0923/BWB_Weather_Station/blob/main/circuit_diagrams/weather_station_receiver_circuit.png" width=30% height=30%>
+
+# How It Works
+1. The weather station located outside will collect meteorological data such as temperature, humidity, air pressure, soil moisture, rain value and snow depth.
+2. The data is transmitted to the receiver at school via NRF24L01.
+3. The receiver module receives the data and uploads it on Google Sheets through Apps Script web app.
+4. Apps Script process data each night to convert them into daily averages and archives the old data.
+5. Google Sheets creates different graphs and publish it on betterwithbees.ca.
