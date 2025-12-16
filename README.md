@@ -31,7 +31,7 @@ This repository has information on the weather station built by Charles P. Allen
 
 # Circuit Diagram
 ## Transmitter
-<img src="https://github.com/alexew0923/BWB_Weather_Station/blob/main/weather_station_circuit.png" width=50% height=50%>
+<img src="https://github.com/alexew0923/BWB_Weather_Station/blob/main/circuit_diagrams/weather_station_circuit.png" width=50% height=50%>
 
 ## Receiver
-<img src="https://github.com/alexew0923/BWB_Weather_Station/blob/main/weather_station_receiver_circuit.png" width=50% height=50%>
+<img src="https://github.com/alexew0923/BWB_Weather_Station/blob/main/circuit_diagrams/weather_station_receiver_circuit.png" width=50% height=50%>
