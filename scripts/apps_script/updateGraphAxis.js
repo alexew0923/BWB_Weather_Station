@@ -2,12 +2,11 @@ function changeYAxis(graphTitle, graphRange, sheet) {
   const dataSheet = ss.getSheetByName(sheet);
   let charts = graphSheet.getCharts();
   charts.forEach(function(chart){
-    for (let i = 0; i < graphTitle.length-1; i++) {
+    for (let i = 0; i < graphTitle.length; i++) {
       if(chart.getOptions().get("title") === graphTitle[i]) {
         // Define the range containing the data you want to use for min/max calculation
         const dataRange = dataSheet.getRange(graphRange[i]); 
         const dataValues = dataRange.getValues();
-        Logger.log(graphTitle.length);
         // Flatten the array and remove empty cells to find min and max
         const flatValues = dataValues.map(row => row[0]).filter(String);
         let minVal = Math.min(...flatValues);
