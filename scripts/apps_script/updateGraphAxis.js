@@ -29,7 +29,7 @@ function changeYAxis(graphTitle, graphRange, sheet) {
         Logger.log(minVal);
         Logger.log(maxVal);
 
-        // Modify the chart's vertical axis
+        // Modify the chart's y-axis
         chart = chart.modify()
           .setOption('vAxes.0.viewWindow.min', minVal)
           .setOption('vAxes.0.viewWindow.max', maxVal)
