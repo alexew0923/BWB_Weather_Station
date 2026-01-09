@@ -31,10 +31,10 @@ This repository has information on the weather station built by Charles P. Allen
 
 # Circuit Diagram
 ## Transmitter
-<img src="https://github.com/alexew0923/BWB_Weather_Station/blob/main/circuit_diagrams/weather_station_circuit.png" width=50% height=50%>
+<img src="https://github.com/alexew0923/BWB_Weather_Station/blob/main/circuit_diagrams/weather_station_transmitter_module_circuit.png" width=50% height=50%>
 
 ## Receiver
-<img src="https://github.com/alexew0923/BWB_Weather_Station/blob/main/circuit_diagrams/weather_station_receiver_circuit.png" width=30% height=30%>
+<img src="https://github.com/alexew0923/BWB_Weather_Station/blob/main/circuit_diagrams/weather_station_receiver_module_circuit.png" width=30% height=30%>
 
 # How It Works
 1. The weather station located outside will collect meteorological data every 5 minutes such as temperature, humidity, air pressure, soil moisture, rain value and snow depth.
@@ -50,6 +50,7 @@ This repository has information on the weather station built by Charles P. Allen
 Go through the list in order to troubleshoot the problem.
 ## No Data Is Being Received
 1. Between 3pm to 4pm on weekdays, the data is not transmitted due to the noise from the school bus radios.
-2. Go to the "Executions" page on Apps Script and see the recent time doGet function was executed.
-3. Check if the receiver is unplugged.
-4. Check if the transmitter is turned on by glancing at it for light up LED on ESP32. Cover the solar panel beforehand because another LED lights up when the solar panel is active.
+3. Go to the modulear and check if the receiver is unplugged.
+   - If it is unplugged, plug the Chromebook charger back into the outlet.
+4. Check if the transmitter is turned on by glancing at it for light up LEDs. You should be able to see one blue LED and two red LEDs.
+   - If you do not see any LEDs lit up, the battery is dead.
