@@ -55,13 +55,14 @@ function archiveOldSensorData() { //executed every night between 1am to 2am to c
     Logger.log(newData);
     sheet.getRange(2, 1, newData.length, newData[0].length).setValues(newData);
   }
-  if (oldData.length > 0) {
+  if (oldData.length > 0) { //store old data to "HistoricalData"
     Logger.log(oldData);
     historicalSheet.getRange(historicalSheet.getLastRow() + 1, 1, oldData.length, oldData[0].length).setValues(oldData);
-  } else {
+  } else { // if not return
     return;
   }
 
+  //Update graphs y-axes
   const graphTitle = ["Temperature (°C) for Last 30 Days", "Air Pressure (hPa) for Last 30 Days", "Snow Depth (cm) for Last 30 Days","Temperature (°C) for Last 7 Days", "Air Pressure (hPa) for Last 7 Days", "Snow Depth (cm) for Last 7 Days"]
   const graphRange = ["B3:B","E3:E","G3:G", "L3:L", "O3:O", "Q3:Q"]
   changeYAxis(graphTitle, graphRange, "Data");
