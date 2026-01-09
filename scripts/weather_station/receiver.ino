@@ -5,9 +5,9 @@
 #include <HTTPClient.h>
 
 RF24 radio(4, 5); // CE, CSN
-const byte address[6] = "00001";
+const byte address[6] = "80923";
 
-struct SensorPacket { //new Structure to Store Data
+struct SensorPacket { //new structure to store data
     float temperature;
     float humidity;
     int soil;
@@ -26,7 +26,7 @@ const char* password = "love2learn";    // change password
 String GOOGLE_SCRIPT_ID = "AKfycbxcMIr2qUmgZoe8sewoufk-KnCAl7qqSj04frDSQsq35S2GecS2qpXnmr1ZgSe5y12s";    // change Gscript ID
 
 void setup() {
-  Serial.begin(9600);
+  Serial.begin(115200);
   Serial.println();
   Serial.print("Connecting to wifi: ");
   Serial.println(ssid);
@@ -57,7 +57,7 @@ void loop() {
     Serial.print(", Snow: "); Serial.print(receivedData.snow);
     Serial.print(", Boot: "); Serial.println(receivedData.bootCount);
 
-    if (WiFi.status() == WL_CONNECTED) {
+    if (WiFi.status() == WL_CONNECTED) { //send the data to Apps Script via web app
       static bool flag = false;
       String urlFinal = "https://script.google.com/macros/s/"+GOOGLE_SCRIPT_ID+"/exec?"+"temp=" + receivedData.temperature + "&hum=" + receivedData.humidity + "&soil=" + receivedData.soil + "&air=" + receivedData.pressure + "&rain=" + receivedData.rain + "&snow=" + receivedData.snow + "&count=" + receivedData.bootCount; //URL for web app
       Serial.print("POST data to spreadsheet:");
