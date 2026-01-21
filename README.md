@@ -34,7 +34,7 @@ This repository has information on the weather station built by Charles P. Allen
 <img src="https://github.com/alexew0923/BWB_Weather_Station/blob/main/circuit_diagrams/weather_station_transmitter_module_circuit.png" width=50% height=50%>
 
 ## Receiver
-<img src="https://github.com/alexew0923/BWB_Weather_Station/blob/main/circuit_diagrams/weather_station_receiver_module_circuit.png" width=30% height=30%>
+<img src="https://github.com/alexew0923/BWB_Weather_Station/blob/main/circuit_diagrams/weather_station_receiver_circuit.png" width=30% height=30%>
 
 # How It Works
 1. The weather station located outside will collect meteorological data every 5 minutes such as temperature, humidity, air pressure, soil moisture, rain value and snow depth.
