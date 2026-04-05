@@ -48,8 +48,7 @@ function archiveOldSensorData() { //executed every night between 1am to 2am to c
   Logger.log(numRows);
   
   // Replace the original data with filtered recent data
-  const lastRow = sheet.getLastRow() - 1;
-  sheet.deleteRows(2, lastRow); // start from row 2, delete remaining rows
+  sheet.getRange('A2:H1001').clearContent(); //Clear values between rows 2-1001
 
   if (newData.length > 0) {
     Logger.log(newData);
@@ -63,7 +62,7 @@ function archiveOldSensorData() { //executed every night between 1am to 2am to c
   }
 
   //Update graphs y-axes
-  const graphTitle = ["Temperature (°C) for Last 30 Days", "Air Pressure (hPa) for Last 30 Days", "Snow Depth (cm) for Last 30 Days","Temperature (°C) for Last 7 Days", "Air Pressure (hPa) for Last 7 Days", "Snow Depth (cm) for Last 7 Days"]
-  const graphRange = ["B3:B","E3:E","G3:G", "L3:L", "O3:O", "Q3:Q"]
+  const graphTitle = ["Temperature (°C) for Last 30 Days", "Air Pressure (hPa) for Last 30 Days", "Battery Voltage (mV) for Last 30 Days", "Temperature (°C) for Last 7 Days", "Air Pressure (hPa) for Last 7 Days", "Battery Voltage (mV) for Last 7 Days"]
+  const graphRange = ["B3:B","E3:E", "G3:G", "L3:L", "O3:O", "Q3:Q"]
   changeYAxis(graphTitle, graphRange, "Data");
 }
