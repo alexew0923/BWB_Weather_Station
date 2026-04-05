@@ -10,17 +10,11 @@ function changeYAxis(graphTitle, graphRange, sheet) {
         // Flatten the array and remove empty cells to find min and max
         const flatValues = dataValues.map(row => row[0]).filter(String);
         let minVal = Math.min(...flatValues);
-        if (graphTitle[i] === "Snow Depth (cm)" || graphTitle[i] === "Snow Depth (cm) for Last 30 Days" || graphTitle[i] === "Snow Depth (cm) for Last 7 Days") {
-          minVal = 0; //always set the minimum value of snow depth to 0 for a better visualization
-        }
         let maxVal = Math.max(...flatValues);
 
         // Optional: Add a buffer to min/max for better visualization
         const buffer = (maxVal - minVal) * 0.1; // 10% buffer
         minVal = minVal - buffer;
-        if (graphTitle[i] === "Snow Depth (cm)" || graphTitle[i] === "Snow Depth (cm) for Last 30 Days" || graphTitle[i] === "Snow Depth (cm) for Last 7 Days") {
-          minVal = 0; //always set the minimum value of snow depth to 0 for a better visualization
-        }
         maxVal = maxVal + buffer;
 
         minVal = Math.floor(minVal);
