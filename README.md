@@ -57,5 +57,5 @@ Go through the list in order to troubleshoot the problem.
 
 # Battery Consumption
 <img src="https://github.com/alexew0923/BWB_Weather_Station/blob/main/battery_consumption.png" width=50% height=50%>
-*Note* The raw data is drawn by myself, but the current consumption calculation is done with Gemini using the formula below
-Current(mA) = Change in Battery State of Change X Battery Capacity(3300mAh) / # of Hours
+*Note* The raw data is drawn by myself, but the current consumption calculation is done with Gemini using the formula: Current(mA) = Change in Battery State of Charge X Battery Capacity(3300mAh) / # of Hours
+The value of state of charge of battery differs for each type of battery and the value Gemini used might not be correct.
