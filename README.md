@@ -55,7 +55,7 @@ Go through the list in order to troubleshoot the problem.
 4. Go to the modular and check if the receiver is unplugged.
    - If it is unplugged, plug the Chromebook charger back into the outlet.
 
-#Battery Consumption
+# Battery Consumption
 <img src="https://github.com/alexew0923/BWB_Weather_Station/blob/main/battery_consumption.png" width=50% height=50%>
 *Note* The raw data is drawn by myself, but the current consumption calculation is done with Gemini using the formula below
 Current(mA) = Change in Battery State of Change X Battery Capacity(3300mAh) / # of Hours
