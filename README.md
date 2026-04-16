@@ -7,12 +7,14 @@ This repository has information on the weather station built by Charles P. Allen
 - Perfboard
 - 5V 1W Solar Panel
 - 1N4007 Diode
+- PN2222 NPN Transistor
 - TP4056 (battery charging module)
 - 3.7V 3300mAh Lithium Ion Battery
 - 2 x 10k Resistors (voltage divider to measure the battery voltage safely on ESP32)
 - Battery Holder
 - Boost Converter (to convert 3.7V from the battery to 5V for ESP32)
 - NRF24L01 (wireless transceiver module with antenna)
+- NRF24L01 Base Module
 - BMP280 (air pressure)
 - Sensirion SHT40 (temperature & humidity)
 - Capacitive Soil Moisture Sensor
@@ -59,3 +61,5 @@ Go through the list in order to troubleshoot the problem.
 <img src="https://github.com/alexew0923/BWB_Weather_Station/blob/main/battery_consumption.png">
 *Note* The raw data is drawn by myself, but the current consumption calculation is done with Gemini using the formula: Current(mA) = Change in Battery State of Charge X Battery Capacity(3300mAh) / # of Hours
 The value of state of charge of battery differs for each type of battery and the value Gemini used might not be correct.
+##Fix
+To resolve this issue, the Robotics club thought of adding another solar panel, but noticed that the NRF24L01 is drawing 40mA even while it is powered down. Therefore, we added a PN2222 transistor to cut off power entirely when NRF24L01 is not being used. We predict this will significantly reduce the power consumption and the actaul values will be updated here later.
