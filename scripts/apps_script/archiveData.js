@@ -65,4 +65,6 @@ function archiveOldSensorData() { //executed every night between 1am to 2am to c
   const graphTitle = ["Temperature (°C) for Last 30 Days", "Air Pressure (hPa) for Last 30 Days", "Battery Voltage (mV) for Last 30 Days", "Temperature (°C) for Last 7 Days", "Air Pressure (hPa) for Last 7 Days", "Battery Voltage (mV) for Last 7 Days"]
   const graphRange = ["B3:B","E3:E", "G3:G", "L3:L", "O3:O", "Q3:Q"]
   changeYAxis(graphTitle, graphRange, "Data");
+  
+  rebuildDailyReliabilityAudit(); // Calls audit function to generate reliability audit
 }
