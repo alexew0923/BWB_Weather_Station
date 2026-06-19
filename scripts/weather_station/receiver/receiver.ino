@@ -1,84 +1,73 @@
-#include <SPI.h>
-#include <nRF24L01.h>
-#include <RF24.h>
-#include "WiFi.h"
-#include <HTTPClient.h>
+#include <esp_now.h>
+#include <WiFi.h>
+#include "Wire.h"
 
-RF24 radio(4, 5); // CE, CSN
-const byte address[6] = "80923";
-
-struct SensorPacket { //new structure to store data
-    float temperature;
-    float humidity;
-    int soil;
-    float pressure;
-    int rain;
-    float battery;
-    unsigned long bootCount;
+struct SensorPacket {       //New structure to store data
+  float temperature;        // SHT40 temperature
+  float humidity;           // SHT40 humidity
+  int soil;                 // Soil moisture %
+  float pressure;           // BMP280 pressure in hPa
+  int rain;                 // Rain sensor value
+  float battery;            // Measures battery voltage
+  unsigned long bootCount;  // Number of times device booted
 };
 SensorPacket receivedData;
 
-// WiFi credentials
-const char* ssid = "changeSSID"; //change SSID(Wi-Fi name)
-const char* password = "changedPassword"; //change password
-
-// Google script ID and required credentials
-String GOOGLE_SCRIPT_ID = "changedGscript ID"; //change Gscript ID
-
-void setup() {
-  Serial.begin(115200);
-  Serial.println();
-  Serial.print("Connecting to wifi: ");
-  Serial.println(ssid);
+// callback function that will be executed when data is received
+void OnDataRecv(const uint8_t * mac, const uint8_t *incomingData, int len) {
+  memcpy(&receivedData, incomingData, sizeof(receivedData));
+  Serial.print("Bytes received: ");
+  Serial.println(len);
+  Serial.print("Temp: ");
+  Serial.print(receivedData.temperature);
+  Serial.print(", Hum: ");
+  Serial.print(receivedData.humidity);
+  Serial.print(", Soil: ");
+  Serial.print(receivedData.soil);
+  Serial.print(", Pressure: ");
+  Serial.print(receivedData.pressure);
+  Serial.print(", Rain: ");
+  Serial.print(receivedData.rain);
+  Serial.print(", Battery Voltage: ");
+  Serial.print(receivedData.battery);
+  Serial.print(", Boot: ");
+  Serial.println(receivedData.bootCount);
   Serial.flush();
-  WiFi.begin(ssid, password); //connect to WiFi
-  while (WiFi.status() != WL_CONNECTED) {
-    Serial.print(".");
-    Serial.print(WiFi.status());
-    delay(1000);
-  }
-  Serial.println("");
 
-  radio.begin(); //Start NRF24L01
-  radio.setChannel(76);
-  radio.setDataRate(RF24_250KBPS);
-  radio.setPALevel(RF24_PA_MAX);
-  radio.openReadingPipe(1, address);
-  radio.startListening();
+  // Write message to the slave
+  Wire.beginTransmission(0x55); //transmit data with tag alphabets
+  Wire.print("t"); Wire.print(receivedData.temperature);
+  Wire.print(",h"); Wire.print(receivedData.humidity);
+  Wire.print(",s"); Wire.print(receivedData.soil);
+  Wire.print(",p"); Wire.print(receivedData.pressure);
+  Wire.print(",r"); Wire.print(receivedData.rain);
+  Wire.print(",b"); Wire.print(receivedData.battery);
+  Wire.print(",c"); Wire.print(receivedData.bootCount);
+  Wire.print(",");
+  
+  uint8_t error = Wire.endTransmission(true);
+  Serial.printf("endTransmission: %u\n", error);
 }
 
-void loop() {
-  if (radio.available()) {
-    Serial.println("success!");
-    radio.read(&receivedData, sizeof(receivedData)); //listen to incoming transmission
-    Serial.print("Temp: "); Serial.print(receivedData.temperature); //serial print for debugging purpose
-    Serial.print(", Hum: "); Serial.print(receivedData.humidity);
-    Serial.print(", Soil: "); Serial.print(receivedData.soil);
-    Serial.print(", Pressure: "); Serial.print(receivedData.pressure);
-    Serial.print(", Rain: "); Serial.print(receivedData.rain);
-    Serial.print(", Battery Voltage: "); Serial.print(receivedData.battery);
-    Serial.print(", Boot: "); Serial.println(receivedData.bootCount);
+void setup() {
+  // Initialize Serial Monitor
+  Serial.begin(115200);
+  Wire.begin(); //I2C communication to send the data to another ESP32, where it will upload it to Google Sheet
 
-    if (WiFi.status() == WL_CONNECTED) { //send the data to Apps Script via web app
-      static bool flag = false;
-      String urlFinal = "https://script.google.com/macros/s/"+GOOGLE_SCRIPT_ID+"/exec?"+"temp=" + receivedData.temperature + "&hum=" + receivedData.humidity + "&soil=" + receivedData.soil + "&air=" + receivedData.pressure + "&rain=" + receivedData.rain + "&bat=" + receivedData.battery + "&count=" + receivedData.bootCount; //URL for web app
-      Serial.print("POST data to spreadsheet:");
-      Serial.println(urlFinal);
-      HTTPClient http;
-      http.begin(urlFinal.c_str());
-      http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
-      int httpCode = http.GET(); 
-      Serial.print("HTTP Status Code: ");
-      Serial.println(httpCode);
-      //---------------------------------------------------------------------
-      //getting response from google sheet
-      String payload;
-      if (httpCode > 0) {
-        payload = http.getString();
-        Serial.println("Payload: "+payload);    
-      }
-      //---------------------------------------------------------------------
-      http.end();
-    }
+  // Set device as a Wi-Fi Station
+  WiFi.mode(WIFI_STA);
+
+  // Init ESP-NOW
+  if (esp_now_init() != ESP_OK) {
+    Serial.println("Error initializing ESP-NOW");
+    return;
   }
+  
+  // Once ESPNow is successfully Init, we will register for recv CB to
+  // get recv packer info
+  esp_now_register_recv_cb(esp_now_recv_cb_t(OnDataRecv));
+}
+ 
+void loop() {
+
 }
