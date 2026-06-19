@@ -3,20 +3,17 @@ This repository has information on the weather station built by Charles P. Allen
 
 # Components Used
 ## Trasmitter
-- ESP32
+- XIAO ESP32C3
 - Perfboard
 - 5V 1W Solar Panel
-- 1N4007 Diode
-- PN2222 NPN Transistor
+- 1N5819 Schottky Diode
+- 2N5401 PNP Transistor
 - TP4056 (battery charging module)
 - 3.7V 3300mAh Lithium Ion Battery
 - 2 x 10k Resistors (voltage divider to measure the battery voltage safely on ESP32)
 - Battery Holder
-- Boost Converter (to convert 3.7V from the battery to 5V for ESP32)
-- NRF24L01 (wireless transceiver module with antenna)
-- NRF24L01 Base Module
 - BMP280 (air pressure)
-- Sensirion SHT40 (temperature & humidity)
+- Sensirion SHT40 with Weatherproof Casing (temperature & humidity)
 - Capacitive Soil Moisture Sensor
 - Rain Sensor (does not actually measure the rainfall amount, but functions similar to the soil moisture sensor)
 - Conformal Coating
@@ -25,25 +22,25 @@ This repository has information on the weather station built by Charles P. Allen
 - 2" 4' PCB Pipe (to place the weather station on top of the pipe in order to prevent ground heat)
 
 ## Receiver
-- ESP32
-- Solderless Breadboard
-- NRF24L01 (wireless transceiver module with antenna)
+- XIAO ESP32C3 (main receiver via ESPNOW with the XIAO ESP32C3 in the transmitter)
+- ESP32 (uploading data to Google Sheet)
 - Carboard Case
 - USB-C Cable
 
 # Circuit Diagram
 ## Transmitter
-<img src="https://raw.githubusercontent.com/alexew0923/BWB_Weather_Station/refs/heads/main/circuit_diagrams/weather_station_circuit_v2.png" width=50% height=50%>
+<img src="https://github.com/alexew0923/BWB_Weather_Station/blob/main/circuit_diagrams/weather_station_v2.png" width=50% height=50%>
 
 ## Receiver
 <img src="https://github.com/alexew0923/BWB_Weather_Station/blob/main/circuit_diagrams/weather_station_receiver_circuit.png" width=30% height=30%>
 
 # How It Works
 1. The weather station located outside will collect meteorological data every 5 minutes such as temperature, humidity, air pressure, soil moisture and rain value.
-2. The data is transmitted to the receiver at school via NRF24L01.
-3. The receiver module receives the data and uploads it on Google Sheets through Apps Script web app.
-4. Apps Script process data each night to convert them into daily averages and archives the old data.
-5. Google Sheets creates different graphs and publish it on betterwithbees.ca.
+2. The data is transmitted to the receiver at school through ESPNOW. *While any ESP32 works fine, XIAO ESP32 series has a good ESPNOW range performance.
+3. The receiver module receives the data and using I2C communication, transmits the data to another ESP32 that is wired together.
+4. The other ESP32 uploads it on Google Sheets through Apps Script web app.
+5. Apps Script process data each night to convert them into daily averages and archives the old data.
+6. Google Sheets creates different graphs and publish it on betterwithbees.ca.
 
 # Maintenance
 1. Visit the weather station regularly to see if there is any damage and clear any snow or debris left on the solar panel and rain sensor.
