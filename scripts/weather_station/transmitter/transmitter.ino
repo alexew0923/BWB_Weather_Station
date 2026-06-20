@@ -16,7 +16,7 @@ RTC_DATA_ATTR int bootCount = 0;
 Adafruit_SHT4x sht4 = Adafruit_SHT4x();
 Adafruit_BMP280 bmp;
 
-uint8_t broadcastAddress[] = {0xe8, 0xf6, 0x0a, 0x15, 0x19, 0xfc};
+uint8_t broadcastAddress[] = {0xe8, 0xf6, 0x0a, 0x15, 0x19, 0xfc}; //must match with the MAC address of the receiver
 esp_now_peer_info_t peerInfo;
 
 struct SensorPacket {       //New structure to store data
