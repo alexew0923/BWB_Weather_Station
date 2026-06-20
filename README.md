@@ -3,7 +3,7 @@ This repository has information on the weather station built by Charles P. Allen
 
 # Components Used
 ## Trasmitter
-- XIAO ESP32C3
+- XIAO ESP32C3 (<0.1mA during deep sleep, compared to ~25mA in standard ESP32)
 - Perfboard
 - 5V 1W Solar Panel
 - 1N5819 Schottky Diode
@@ -32,7 +32,7 @@ This repository has information on the weather station built by Charles P. Allen
 <img src="https://github.com/alexew0923/BWB_Weather_Station/blob/main/circuit_diagrams/weather_station_v2.png" width=50% height=50%>
 
 ## Receiver
-<img src="https://github.com/alexew0923/BWB_Weather_Station/blob/main/circuit_diagrams/weather_station_receiver_circuit.png" width=30% height=30%>
+<img src="https://github.com/alexew0923/BWB_Weather_Station/blob/main/circuit_diagrams/weather_station_receiver_v2.png" width=30% height=30%>
 
 # How It Works
 1. The weather station located outside will collect meteorological data every 5 minutes such as temperature, humidity, air pressure, soil moisture and rain value.
@@ -48,16 +48,17 @@ This repository has information on the weather station built by Charles P. Allen
 # Troubleshooting
 Go through the list in order to troubleshoot the problem.
 ## No Data Is Being Received
-1. Between 3pm to 4pm on weekdays, the data is not transmitted due to the noise from the school bus radios.
+1. Between 11pm - 6am, the receiver is turned off because the entire power goes down in the school.
 2. Check the battery voltage on the website.
    - If the battery voltage is around 3.0V, the battery is dead. It can be recharged through the solar panel or it can be replaced with a new one.
 4. Go to the modular and check if the receiver is unplugged.
    - If it is unplugged, plug the Chromebook charger back into the outlet.
+   - Even if it is plugged in, just unplug the charger and plug it back in order to restart the receiver.
 
 # Battery Consumption
 <img src="https://github.com/alexew0923/BWB_Weather_Station/blob/main/battery_consumption.png">
 *Note* The raw data is drawn by myself, but the current consumption calculation is done with Gemini using the formula: Current(mA) = Change in Battery State of Charge X Battery Capacity(3300mAh) / # of Hours
 The value of state of charge of battery differs for each type of battery and the value Gemini used might not be correct.
 
-## Fix
-To resolve this issue, the Robotics club thought of adding another solar panel, but noticed that the NRF24L01 is drawing 40mA even while it is powered down. Therefore, we added a PN2222 transistor to cut off power entirely when NRF24L01 is not being used. We predict this will significantly reduce the power consumption and the actaul values will be updated here later.
+## Change from Version 1 to Version 2
+Originally, the weather station used a generic ESP32 and used NRF24L01+PA+LNA transceiver modules to send the data. However, the transmission was limited to short range and the ESP32 drew ~25mA even in deep sleep mode. I am assuming it drew that much current because the 3.7V from the battery passes through the linear voltage regulator on ESP32, which consumes quite amount of power. To address these issues, I changed the ESP32 to a specific ESP32 called XIAO ESP32 C3 manufactured by the Seeed Studio. I switched the communication between the transmitter and receiver from NRF24L01 to ESPNOW, which improves the range significantly and I find it more reliable as well. Additionally, XIAO ESP32 C3 draws less than 0.1mA of power during deep sleep, which is impressive compared to the previous result. The reason why I did not use ESPNOW with the regular ESP32 is because it does not come with an external antenna, so NRF24L01 had a longer range.
