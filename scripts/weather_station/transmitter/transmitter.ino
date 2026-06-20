@@ -36,7 +36,6 @@ void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
 }
 
 void setup() {
-  delay(500) //prevent infinte deep sleep bug
   //Serial.begin(115200);  //uncomment serial print lines when debugging
   Wire.begin(6, 7);
   sht4.begin(&Wire);
