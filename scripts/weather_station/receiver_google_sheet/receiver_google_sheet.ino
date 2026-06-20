@@ -50,7 +50,7 @@ void onReceive(int len) {
       receivedData.battery = atof(message);
     } else if (initial[0] == 'c') {
       receivedData.bootCount = atof(message);
-    } 
+    }
   }
   
   Serial.print("Temp: ");
@@ -90,6 +90,24 @@ void onReceive(int len) {
     }
     //---------------------------------------------------------------------
     http.end();
+  } else {
+    WiFi.disconnect(); //if WiFi is not connected, disconnect then try to reconnect
+    delay(1000);
+    connectWiFi();
+  }
+}
+
+void connectWiFi() {
+  int reconnectCount;
+  WiFi.begin(ssid, password); //connect to WiFi
+  while (WiFi.status() != WL_CONNECTED) {
+    if (reconnectCount > 300) { //if it takes more than 5 minutes to connect, restart the device
+      ESP.restart();
+    }
+    Serial.print(".");
+    Serial.print(WiFi.status());
+    reconnectCount ++;
+    delay(1000);
   }
 }
 
@@ -101,12 +119,7 @@ void setup() {
   Serial.print("Connecting to wifi: ");
   Serial.println(ssid);
   Serial.flush();
-  WiFi.begin(ssid, password); //connect to WiFi
-  while (WiFi.status() != WL_CONNECTED) {
-    Serial.print(".");
-    Serial.print(WiFi.status());
-    delay(1000);
-  }
+  connectWiFi();
   Serial.println();
 }
 
