@@ -17,11 +17,11 @@ struct SensorPacket {       //New structure to store data
 SensorPacket receivedData;
 
 // WiFi credentials
-const char* ssid = "HighSchool_Public"; //change SSID(Wi-Fi name)
+const char* ssid = "HighSchool_Public"; //change SSID (WiFi name)
 const char* password = "love2learn"; //change password
 
 // Google script ID and required credentials
-String GOOGLE_SCRIPT_ID = "AKfycbw2qVzdsxIhIxKAkYWbWxKMvr4d1-6fw41GST7mBr_tgUDdeAnpoScuklqkv9_oGZ8l"; //change Gscript ID
+String GOOGLE_SCRIPT_ID = "paste your Google Script ID here"; //change Gscript ID found in Apps Script
 
 void onReceive(int len) {
   Serial.printf("onReceive[%d]: ", len);
