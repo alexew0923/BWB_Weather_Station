@@ -9,17 +9,19 @@ function archiveOldSensorData() { //executed every night between 1am to 2am to c
   const newData = [];
   const oldData = [];
   const values = new Array(6);
+  const successRate = new Array(7);
   let numRows = [0, 0, 0, 0, 0, 0];
+  let transmissions = 0;
 
   for (let i = 1; i < data.length; i++) {
     const row = data[i];
     Logger.log(row);
     const timestamp = new Date(row[0]);
     
-    if (timestamp < dateOnly) { //check if the data received is today or yesterday
+    if (timestamp < dateOnly) { //check if the data received is today (false) or yesterday (true)
       oldData.push(row);
       for (let j = 0; j < 6; j++) {
-        if (row[j+1] !== "") { //if the cell value is not empty, add them up
+        if (row[j + 1] !== "") { //if the cell value is not empty, add them up
           if (numRows[j] == 0) {
             values[j] = row[j+1];
           } else {
@@ -28,6 +30,7 @@ function archiveOldSensorData() { //executed every night between 1am to 2am to c
           numRows[j] ++; //count how many times the data is received
         }
       }
+      transmissions ++;
     } else {
       newData.push(row); // Keep recent row
     }
@@ -40,9 +43,15 @@ function archiveOldSensorData() { //executed every night between 1am to 2am to c
     }
   }
   
+  // Calculate success rate for each sensor
+  successRate[0] = transmissions / 204;
+  for (let i = 1; i < 7; i++) {
+    successRate[i] = numRows[i - 1] / transmissions;
+  }
+
   dateOnly.setDate(dateOnly.getDate() - 1); 
   archiveSheet.appendRow([dateOnly, ...values]);
-  numberSheet.appendRow([dateOnly, ...numRows]);
+  numberSheet.appendRow([dateOnly, ...numRows, transmissions, ...successRate]);
 
   Logger.log(values);
   Logger.log(numRows);
@@ -61,10 +70,8 @@ function archiveOldSensorData() { //executed every night between 1am to 2am to c
     return;
   }
 
-  //Update graphs y-axes
+  //Update graph y-axes
   const graphTitle = ["Temperature (°C) for Last 30 Days", "Air Pressure (hPa) for Last 30 Days", "Battery Voltage (mV) for Last 30 Days", "Temperature (°C) for Last 7 Days", "Air Pressure (hPa) for Last 7 Days", "Battery Voltage (mV) for Last 7 Days"]
-  const graphRange = ["B3:B","E3:E", "G3:G", "L3:L", "O3:O", "Q3:Q"]
+  graphRange = ["B3:B302","E3:E302", "G3:G302", "J3:J302", "M3:M302", "O3:O302"]
   changeYAxis(graphTitle, graphRange, "Data");
-  
-  rebuildDailyReliabilityAudit(); // Calls audit function to generate reliability audit
 }
