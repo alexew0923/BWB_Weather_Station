@@ -1,4 +1,4 @@
-// This code is not used anymore as Process_Data.gs already handles transmission success rate.
+// This code is not used anymore as archiveData.js already handles transmission success rate.
 
 function rebuildDailyReliabilityAudit() {
   const lock = LockService.getScriptLock();
