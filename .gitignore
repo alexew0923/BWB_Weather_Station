@@ -1,0 +1,18 @@
+# Data exports and generated analysis outputs are not tracked.
+*.csv
+analysis/data/
+audit_output/
+
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Tooling caches
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/

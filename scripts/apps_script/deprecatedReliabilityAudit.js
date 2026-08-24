@@ -1,4 +1,15 @@
-// This code is not used anymore as archiveData.js already handles transmission success rate.
+// DEPRECATED -- kept for historical reference only. Do not attach to a trigger.
+//
+// Renamed from reliabilityAudit.js to avoid confusion with the current audit,
+// analysis/reliability_audit.py, which supersedes it.
+//
+// Not in use because archiveData.js already handles transmission success rate.
+//
+// Known defect: EXPECTED_ROWS_PER_DAY below is a fixed 288. That was correct
+// while the station ran 24 h/day, but the building's power has been cut
+// ~23:00-06:00 since 2026-04-21, leaving 204 schedulable transmissions per day.
+// Every completeness figure this script produced for dates after that is
+// therefore overstated in its denominator. The Python audit uses both baselines.
 
 function rebuildDailyReliabilityAudit() {
   const lock = LockService.getScriptLock();
