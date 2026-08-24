@@ -1,0 +1,6 @@
+{
+  "//": "Points VS Code / Pylance at the local venv so pandas, numpy and matplotlib resolve.",
+  "venvPath": ".",
+  "venv": ".venv",
+  "typeCheckingMode": "standard"
+}
