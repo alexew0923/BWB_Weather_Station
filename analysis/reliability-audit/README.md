@@ -3,20 +3,18 @@
 A reproducible Python audit of data delivery and sensor health for the Better with
 Bees weather station, run against a `HistoricalData` CSV export.
 
-#Images
-<img width="1950" height="780" alt="plot_daily_completeness" src="https://github.com/user-attachments/assets/c149b49b-4707-4c8d-9f7d-f6a22c1139dd" />
-<img width="1950" height="715" alt="plot_gap_distribution" src="https://github.com/user-attachments/assets/e1b48ce2-1521-4c26-aa6b-d758600815e1" />
-<img width="1950" height="780" alt="plot_daily_largest_gap" src="https://github.com/user-attachments/assets/463e2a02-f703-4ae8-b871-fbae561af13e" />
-
-
-
-
 ```bash
 .venv/bin/python reliability_audit.py data/HistoricalData.csv
 ```
 
 Run from this directory. CSV exports live in `data/`. The output directory is an
 optional second argument and defaults to `audit_output/`.
+
+# Images
+<img width="1950" height="780" alt="plot_daily_completeness" src="https://github.com/user-attachments/assets/c149b49b-4707-4c8d-9f7d-f6a22c1139dd" />
+<img width="1950" height="715" alt="plot_gap_distribution" src="https://github.com/user-attachments/assets/e1b48ce2-1521-4c26-aa6b-d758600815e1" />
+<img width="1950" height="780" alt="plot_daily_largest_gap" src="https://github.com/user-attachments/assets/463e2a02-f703-4ae8-b871-fbae561af13e" />
+
 
 ### Environment
 
