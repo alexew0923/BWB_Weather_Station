@@ -116,6 +116,20 @@ An optional output directory can be provided:
 
 The audit generates CSV reports and diagnostic figures.
 
+### Project structure
+
+`reliability_audit.py` remains the command-line entry point. The implementation
+is split by responsibility without changing the command or generated outputs:
+
+| Module | Responsibility |
+|---|---|
+| `audit_config.py` | fixed assumptions, thresholds and shared constants |
+| `data_validation.py` | CSV loading, schema checks and integrity handling |
+| `outage_analysis.py` | inter-arrival gaps and outage classification |
+| `reliability_metrics.py` | daily row, sensor and reliability calculations |
+| `reporting.py` | console summaries and anomaly notes |
+| `visualization.py` | PNG figure generation |
+
 ---
 
 # Key Results
