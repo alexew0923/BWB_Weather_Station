@@ -16,3 +16,7 @@ venv/
 .mypy_cache/
 .ruff_cache/
 .pytest_cache/
+
+# Local AI-agent skills installed by development tools
+.agents/
+.claude/
