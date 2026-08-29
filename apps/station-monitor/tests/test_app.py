@@ -1,6 +1,7 @@
-"""Streamlit interaction and failure-state checks for the research dashboard."""
+"""Streamlit interaction and failure-state checks for the unified dashboard."""
 
 import os
+import sys
 import tempfile
 import unittest
 from datetime import date
@@ -9,7 +10,10 @@ from pathlib import Path
 from streamlit.testing.v1 import AppTest
 
 
-APP_PATH = Path(__file__).resolve().parent / "app.py"
+APP_DIR = Path(__file__).resolve().parents[1]
+if str(APP_DIR) not in sys.path:
+    sys.path.insert(0, str(APP_DIR))
+APP_PATH = APP_DIR / "app_pages" / "battery.py"
 
 
 class DashboardTests(unittest.TestCase):
@@ -24,7 +28,7 @@ class DashboardTests(unittest.TestCase):
     def test_dashboard_loads_and_primary_controls_rerun(self):
         app = self.run_app()
         self.assert_no_exceptions(app)
-        self.assertIn("Battery & energy research", [item.value for item in app.title])
+        self.assertIn("Battery & energy analysis", [item.value for item in app.title])
         self.assertEqual(app.segmented_control[0].value, "Full")
         self.assertGreater(len(app.selectbox[0].options), 1)
 

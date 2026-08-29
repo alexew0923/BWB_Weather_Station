@@ -1,8 +1,8 @@
-/* StationWatch Live — dashboard styling.
+/* Better With Bees station monitor — shared dashboard styling.
  *
  * Colour rules:
  *   · Semantic colours (--sw-green/amber/red/gray/accent) come from PALETTE in
- *     app.py and are injected as custom properties. They are chosen to hold
+ *     styles.py and are injected as custom properties. They are chosen to hold
  *     contrast on both the light and the dark background.
  *   · Neutral colours are derived from the inherited text colour below, so they
  *     follow whichever theme Streamlit is showing without being detected.

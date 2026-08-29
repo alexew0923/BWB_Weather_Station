@@ -2,8 +2,8 @@
 
 This module is the single source of truth for how telemetry freshness is
 retrieved, measured, and classified. It contains no presentation code, so the
-terminal CLI (``station_watch.py``) and the Streamlit dashboard (``app.py``)
-both render the same result object instead of repeating the calculation.
+terminal CLI and any external presentation layer can render the same result
+object instead of repeating the calculation.
 
 The only observation point is the public Google Sheet. A failure to observe it
 is a ``MonitorError``, never an ``OFFLINE`` station status.
@@ -324,6 +324,10 @@ class HealthReport:
     age_seconds: float
     thresholds: Thresholds
     recent_timestamps: tuple = field(default=())
+    # Raw values from the newest valid telemetry row, excluding Timestamp.
+    # Keeping these with the report lets every presentation layer show the same
+    # source observation without downloading or parsing the Sheet again.
+    latest_values: tuple = field(default=())
     # The window telemetry is expected in, e.g. "06:00-23:00 America/Halifax".
     window_text: str = "continuous (no scheduled shutdown)"
     # When telemetry is next expected; set only while SCHEDULED_INACTIVE.
@@ -378,6 +382,7 @@ class TelemetrySource:
         # Timestamps that landed in a repeated or skipped DST hour, recorded by
         # parse_timestamps so the caller can say so rather than imply certainty.
         self.ambiguous = set()
+        self.latest_values = ()
 
     @property
     def url(self):
@@ -420,6 +425,17 @@ class TelemetrySource:
         localised through localize_wall_clock rather than having a zone attached
         blindly.
         """
+        readings = self.parse_readings(csv_text, reference=reference)
+        return [moment for moment, _ in readings]
+
+    def parse_readings(self, csv_text, reference=None):
+        """Return valid ``(timestamp, values)`` pairs, oldest first.
+
+        Values remain source strings because StationWatch does not impose sensor
+        units or validity rules. It only reports what reached the configured
+        observation point; historical scientific validation belongs to the
+        separate analysis engines.
+        """
         try:
             rows = csv.DictReader(io.StringIO(csv_text))
             if not rows.fieldnames or TIMESTAMP_COLUMN not in rows.fieldnames:
@@ -427,7 +443,7 @@ class TelemetrySource:
                     f"the telemetry source has no '{TIMESTAMP_COLUMN}' column",
                     summary=UNREADABLE_SUMMARY,
                 )
-            timestamps = []
+            readings = []
             self.ambiguous = set()
             for row in rows:
                 value = (row.get(TIMESTAMP_COLUMN) or "").strip()
@@ -440,13 +456,19 @@ class TelemetrySource:
                 )
                 if was_ambiguous:
                     self.ambiguous.add(moment)
-                timestamps.append(moment)
+                values = tuple(
+                    (name, (row.get(name) or "").strip())
+                    for name in rows.fieldnames
+                    if name != TIMESTAMP_COLUMN
+                )
+                readings.append((moment, values))
         except csv.Error as error:
             raise MonitorError(
                 f"could not parse the telemetry source: {error}", summary=UNREADABLE_SUMMARY
             ) from error
 
-        if not timestamps:
+        if not readings:
+            self.latest_values = ()
             raise MonitorError(
                 "the telemetry source contains no valid readings",
                 summary=(
@@ -454,7 +476,9 @@ class TelemetrySource:
                     "readings to measure."
                 ),
             )
-        return sorted(timestamps)
+        readings.sort(key=lambda item: item[0])
+        self.latest_values = readings[-1][1]
+        return readings
 
 
 class StationMonitor:
@@ -496,6 +520,7 @@ class StationMonitor:
             age_seconds=age_seconds,
             thresholds=self.thresholds,
             recent_timestamps=tuple(timestamps[-recent_limit:]),
+            latest_values=tuple(getattr(self.source, "latest_values", ())),
             window_text=self.schedule.describe(checked_at),
             resumes_at=self.schedule.resumes_at(checked_at),
             classification_age_seconds=classification_age,

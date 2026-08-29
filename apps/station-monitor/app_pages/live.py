@@ -1,4 +1,4 @@
-"""Live operational dashboard for Better With Bees StationWatch.
+"""Live operational page for the unified Better With Bees station monitor.
 
     streamlit run app.py
 
@@ -8,39 +8,24 @@ Colours are defined once in ``PALETTE`` below and used by both the stylesheet
 """
 
 from html import escape
-from pathlib import Path
-
 import altair as alt
 import streamlit as st
 
-from station_health import (
+from services.live_service import (
     OBSERVATION_NOTE,
     UPSTREAM_DOMAINS,
     MonitorError,
     StationMonitor,
     Status,
     format_timestamp,
+    meaningful_latest_values,
 )
+from styles import PALETTE
 
 
 REFRESH_SECONDS = 45
 RECENT_TABLE_ROWS = 8
 RECENT_GAP_READINGS = 30
-STYLESHEET = Path(__file__).with_name("dashboard.css")
-
-# The single source of truth for semantic colour, shared by dashboard.css (as
-# --sw-* properties) and the chart. Each value keeps a contrast ratio above 3.5
-# against both the light and the dark page background, so one palette serves
-# both themes and the app never has to detect which theme is active.
-PALETTE = {
-    "green": "#15803d",
-    "amber": "#c2740a",
-    "red": "#d43b3b",
-    "gray": "#78827f",
-    "accent": "#128b80",
-}
-MONO_STACK = "'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace"
-
 # Which palette entry each state uses. dashboard.css keys off the same slugs.
 STATE_SLUGS = {
     Status.HEALTHY: "healthy",
@@ -49,15 +34,6 @@ STATE_SLUGS = {
     Status.OFFLINE: "offline",
     Status.SCHEDULED_INACTIVE: "inactive",
 }
-
-
-def apply_design_tokens():
-    """Publish the palette as CSS variables, then load the stylesheet."""
-    variables = "\n".join(f"  --sw-{name}: {value};" for name, value in PALETTE.items())
-    st.html(
-        f"<style>\n:root {{\n{variables}\n  --sw-mono: {MONO_STACK};\n}}\n"
-        f"{STYLESHEET.read_text(encoding='utf-8')}\n</style>"
-    )
 
 
 def render_header():
@@ -239,6 +215,30 @@ def render_recent_activity(report):
             )
 
 
+def render_latest_observation(report):
+    """Show populated sensor values from the same row used for freshness."""
+    values = meaningful_latest_values(report)
+    st.html('<div class="sw-section">Latest source observation</div>')
+    with st.container(border=True):
+        if not values:
+            st.caption(
+                "The newest valid row has a timestamp but no populated sensor values to display."
+            )
+            return
+        st.dataframe(
+            {"Field": [name for name, _ in values], "Source value": [value for _, value in values]},
+            hide_index=True,
+            width="stretch",
+            column_config={
+                "Field": st.column_config.TextColumn("Field", width="medium"),
+                "Source value": st.column_config.TextColumn("Latest value", width="medium"),
+            },
+        )
+        st.caption(
+            "Values are shown exactly as delivered by the live Sheet. StationWatch does not apply historical validation or infer missing units."
+        )
+
+
 def render_observation_boundary():
     """State plainly what the dashboard does and does not know."""
     with st.expander("Observation boundary", icon=":material/help_outline:"):
@@ -302,15 +302,11 @@ def render_check():
 
     render_secondary_metrics(report)
     st.space("small")
+    render_latest_observation(report)
+    st.space("small")
     render_recent_activity(report)
 
 
-st.set_page_config(
-    page_title="StationWatch Live",
-    page_icon=":material/sensors:",
-    layout="wide",
-)
-apply_design_tokens()
 render_header()
 
 controls = st.container(horizontal=True, horizontal_alignment="right")

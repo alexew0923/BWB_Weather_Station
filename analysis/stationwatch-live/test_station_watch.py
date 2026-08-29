@@ -352,6 +352,19 @@ class ParsingTests(unittest.TestCase):
         # The source was retrieved, so the headline must not claim otherwise.
         self.assertIn("holds no", raised.exception.summary)
 
+    def test_latest_sensor_values_follow_the_newest_valid_timestamp(self):
+        source = TelemetrySource()
+        timestamps = source.parse_timestamps(
+            "Timestamp,Temperature,Battery Voltage\n"
+            "2026-08-29 11:55:00,21.5,4010\n"
+            "2026-08-29 11:50:00,20.0,3990\n"
+        )
+        self.assertEqual(len(timestamps), 2)
+        self.assertEqual(
+            dict(source.latest_values),
+            {"Temperature": "21.5", "Battery Voltage": "4010"},
+        )
+
 
 class ConfigurationTests(unittest.TestCase):
     """The telemetry URL comes from the environment and is never hard-coded."""

@@ -6,10 +6,9 @@ Better With Bees solar-powered sensing node. It is deliberately separate from
 outages, and gaps, while this project studies voltage behavior and its possible
 relationship to those reliability events.
 
-It includes both a reproducible CLI analysis and a responsive Streamlit research
-dashboard. The dashboard calls the same functions in `battery_analysis.py`; it
-does not maintain a second set of formulas or write over the CLI's research
-artifacts.
+It includes a reproducible CLI analysis engine. The unified Streamlit UI under
+`../../apps/station-monitor/` calls the same functions in `battery_analysis.py`;
+it does not maintain a second set of formulas or write over CLI artifacts.
 
 ## Current capabilities
 
@@ -58,44 +57,6 @@ Run the tests with:
 ```bash
 python -m unittest -v
 ```
-
-## Running the dashboard
-
-From this directory, launch the interactive research view with:
-
-```bash
-streamlit run app.py
-```
-
-The default telemetry source is the sibling audit's
-`../reliability-audit/data/HistoricalData.csv`. The dashboard also prefers the
-audit's current `audit_output/outage_intervals.csv` and
-`audit_output/daily_reliability.csv`, then safely falls back to the established
-reliability helpers if those exports are absent or stale.
-
-For another local source, set explicit paths before launch:
-
-```bash
-export BWB_HISTORICAL_CSV=/path/to/HistoricalData.csv
-export BWB_RELIABILITY_OUTPUT_DIR=/path/to/reliability-audit-output
-streamlit run app.py
-```
-
-The dashboard cache key includes file path, modification time, and size for the
-historical CSV and both reliability exports. Replacing any source file therefore
-invalidates the cached analysis without requiring a code change.
-
-The interface provides:
-
-- full, 90-day, 30-day, 7-day, and custom-date voltage views;
-- daily voltage range, net-change, and rolling-trend views;
-- descriptive battery/reliability and battery/temperature relationships;
-- a focused selector for every significant outage and its available battery
-  context; and
-- an input-only, uncalibrated energy model with no hidden hardware defaults.
-
-On narrow screens, metric groups and analytical sections wrap into a vertical
-reading order. All charts preserve tooltips and the same interpretation limits.
 
 ## Outputs
 

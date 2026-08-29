@@ -1,7 +1,5 @@
-"""Interactive research dashboard for the Better With Bees battery analysis."""
+"""Battery research page for the unified Better With Bees station monitor."""
 
-import contextlib
-import io
 import math
 import os
 from pathlib import Path
@@ -10,30 +8,19 @@ import altair as alt
 import pandas as pd
 import streamlit as st
 
-from battery_analysis import (
-    DEFAULT_RELIABILITY_PROJECT,
+from services.battery_service import (
+    DEFAULT_DATA_PATH,
+    DEFAULT_RELIABILITY_OUTPUT,
+    EnergyModelParameters,
     MIN_TREND_COVERAGE,
     MIN_TREND_SAMPLES,
     STATION_TIMEZONE,
-    add_slot_index,
-    analyze_relationships,
-    build_battery_summary,
-    compute_daily_battery_metrics,
-    compute_gaps,
-    compute_outage_battery_context,
-    compute_rolling_battery_metrics,
-    detect_outages,
-    load_and_validate_data,
-    load_reliability_exports,
-    reliability_exports_match_data,
-    significant_outages,
+    analysis_fingerprint,
+    load_battery_analysis,
+    model_daily_power_budget,
 )
-from energy_model import EnergyModelParameters, model_daily_power_budget
 
 
-PROJECT_DIR = Path(__file__).resolve().parent
-DEFAULT_DATA_PATH = DEFAULT_RELIABILITY_PROJECT / "data" / "HistoricalData.csv"
-DEFAULT_RELIABILITY_OUTPUT = DEFAULT_RELIABILITY_PROJECT / "audit_output"
 DATA_PATH = Path(os.environ.get("BWB_HISTORICAL_CSV", DEFAULT_DATA_PATH)).expanduser()
 RELIABILITY_OUTPUT = Path(
     os.environ.get("BWB_RELIABILITY_OUTPUT_DIR", DEFAULT_RELIABILITY_OUTPUT)
@@ -62,118 +49,11 @@ RELATIONSHIP_COLUMNS = {
 }
 
 
-st.set_page_config(
-    page_title="Battery & Energy Research | Better With Bees",
-    page_icon="🔋",
-    layout="wide",
-    initial_sidebar_state="collapsed",
-)
-
-st.html(
-    """
-    <style>
-      [data-testid="stMainBlockContainer"] {
-        max-width: 1480px;
-        padding-top: 2.25rem;
-        padding-bottom: 4rem;
-      }
-      .bwb-kicker {
-        color: #176B68;
-        font-size: 0.76rem;
-        font-weight: 700;
-        letter-spacing: 0.12em;
-        text-transform: uppercase;
-        margin-bottom: 0.35rem;
-      }
-      .bwb-deck {
-        color: #52605B;
-        font-size: 1.03rem;
-        max-width: 920px;
-        line-height: 1.55;
-        margin: 0.2rem 0 0.9rem 0;
-      }
-      .bwb-note {
-        border-left: 3px solid #D18A3D;
-        background: #F6F3EC;
-        color: #48534F;
-        padding: 0.75rem 0.9rem;
-        border-radius: 0 6px 6px 0;
-        font-size: 0.91rem;
-      }
-      [data-testid="stMetric"] {
-        background: #FFFFFF;
-        box-shadow: 0 1px 2px rgba(23, 33, 31, 0.035);
-      }
-      [data-testid="stMetricValue"] {
-        color: #17211F;
-      }
-      [data-testid="stCaptionContainer"] {
-        color: #63716C;
-      }
-      hr {
-        border-color: #D5DFDA !important;
-      }
-      @media (max-width: 700px) {
-        [data-testid="stMainBlockContainer"] { padding-top: 1.2rem; }
-        .bwb-deck { font-size: 0.95rem; }
-      }
-    </style>
-    """
-)
-
-
-def file_fingerprint(path):
-    """Return hashable file metadata so Streamlit invalidates cached analysis."""
-    path = Path(path).resolve()
-    if not path.exists() or not path.is_file():
-        return str(path), None, None
-    stat = path.stat()
-    return str(path), stat.st_mtime_ns, stat.st_size
-
-
-def analysis_fingerprint(csv_path, reliability_output):
-    return (
-        file_fingerprint(csv_path),
-        file_fingerprint(Path(reliability_output) / "outage_intervals.csv"),
-        file_fingerprint(Path(reliability_output) / "daily_reliability.csv"),
-    )
-
-
 @st.cache_data(max_entries=8, show_spinner=False)
-def load_analysis(csv_path, reliability_output, fingerprint):
-    """Load and compute through the project's existing analytical functions."""
+def cached_load_analysis(csv_path, reliability_output, fingerprint):
+    """Cache deterministic engine output in the presentation layer only."""
     del fingerprint  # The value exists solely as a cache key.
-    validation_output = io.StringIO()
-    with contextlib.redirect_stdout(validation_output):
-        frame, _ = load_and_validate_data(csv_path)
-
-    outages, reliability_daily = load_reliability_exports(reliability_output)
-    reliability_source = "exported reliability-audit CSVs"
-    if outages is None or not reliability_exports_match_data(frame, reliability_daily):
-        indexed = add_slot_index(frame)
-        outages = detect_outages(indexed, compute_gaps(indexed))
-        reliability_daily = None
-        reliability_source = "stable reliability helpers (exports unavailable or stale)"
-
-    daily = compute_daily_battery_metrics(
-        frame, outages=outages, reliability_daily=reliability_daily
-    )
-    rolling = compute_rolling_battery_metrics(frame)
-    outage_context = compute_outage_battery_context(frame, outages)
-    relationships = analyze_relationships(daily)
-    summary = build_battery_summary(
-        frame, daily, outage_context, relationships
-    )
-    summary["reliability_context_source"] = reliability_source
-    return {
-        "daily": daily,
-        "rolling": rolling,
-        "outages": significant_outages(outages).reset_index(drop=True),
-        "outage_context": outage_context,
-        "relationships": relationships,
-        "summary": summary,
-        "validation_log": validation_output.getvalue(),
-    }
+    return load_battery_analysis(csv_path, reliability_output)
 
 
 def v(value, digits=3, suffix=" V"):
@@ -424,7 +304,7 @@ def subsection(title, description=None):
 
 
 st.html('<div class="bwb-kicker">Better With Bees · Field telemetry research</div>')
-st.title("Battery & energy research")
+st.title("Battery & energy analysis")
 st.html(
     '<p class="bwb-deck">Observed voltage history, derived operating patterns, '
     'and evidence-bounded reliability context for the solar-powered sensing node.</p>'
@@ -444,14 +324,14 @@ if not DATA_PATH.exists():
 
 try:
     with st.spinner("Validating telemetry and preparing battery research views…"):
-        analysis = load_analysis(
+        analysis = cached_load_analysis(
             str(DATA_PATH.resolve()),
             str(RELIABILITY_OUTPUT.resolve()),
             analysis_fingerprint(DATA_PATH, RELIABILITY_OUTPUT),
         )
 except (SystemExit, ValueError, KeyError, OSError, pd.errors.ParserError) as error:
     st.error("The telemetry source could not be analyzed safely.", icon=":material/error:")
-    st.code(str(error), language=None)
+    st.caption(f"Details: {error}")
     st.caption("The source file was not modified. Correct the input and restart the app.")
     st.stop()
 
@@ -475,6 +355,10 @@ quality = summary["data_quality"]
 derived = summary["derived_summary"]
 
 latest = rolling.dropna(subset=["battery_voltage_v"]).iloc[-1]
+subsection(
+    "Overview",
+    "Observed battery coverage and the latest validated historical reading.",
+)
 with st.container(horizontal=True, wrap=True, gap="small"):
     st.metric(
         "Latest observed voltage",
@@ -515,9 +399,9 @@ st.html(
     'energy, or battery health.</div>'
 )
 
-st.divider()
+st.space("small")
 subsection(
-    "Voltage history",
+    "Battery voltage history",
     "Observed samples, a derived 24-hour rolling mean, genuine data gaps, and significant outage starts.",
 )
 
@@ -561,7 +445,7 @@ if sampled:
     caption += " · Lightly sampled for display; calculations use the complete validated series."
 st.caption(caption + " · Dashed red rules mark significant outage starts.")
 
-st.divider()
+st.space("small")
 subsection(
     "Daily voltage dynamics",
     "Daily min–max span with mean and median voltage above; observed first-to-last daily change below.",
@@ -579,7 +463,7 @@ st.caption(
     "Calendar days without valid battery data remain gaps."
 )
 
-st.divider()
+st.space("small")
 subsection(
     "Charge- and discharge-like behavior",
     "Voltage-direction proxies only. They do not measure charge current, energy flow, or state of charge.",
@@ -599,7 +483,7 @@ st.caption(
     "Positive and negative changes are descriptive voltage behavior, not direct charging or discharging measurements."
 )
 
-st.divider()
+st.space("small")
 subsection(
     "Battery ↔ reliability",
     "The strongest available day-level association is shown without a fitted trend line to avoid overstating a weak relationship.",
@@ -631,9 +515,9 @@ if reliability_relationship:
 else:
     st.info("No reliability relationship has enough usable variation to display.")
 
-st.divider()
+st.space("small")
 subsection(
-    "Environmental context",
+    "Environmental relationships",
     "Temperature is prioritized because its field meaning is documented; humidity and raw rain/wetness remain secondary.",
 )
 environment_relationship = strongest_relationship(relationships, "environment")
@@ -652,7 +536,7 @@ if environment_relationship:
             "This descriptive association cannot separate those mechanisms."
         )
 
-st.divider()
+st.space("small")
 subsection(
     "Outage investigation",
     "Inspect observed battery context before and after a significant delivery gap; this view does not assign root cause.",
@@ -688,9 +572,9 @@ else:
         st.markdown("**Not determinable**")
         st.write(selected["not_proven"])
 
-st.divider()
+st.space("small")
 subsection(
-    "Experimental energy model",
+    "Energy model",
     "Uncalibrated and input-driven. Enter measured or documented hardware parameters; the dashboard supplies no hidden defaults.",
 )
 st.warning(
@@ -764,7 +648,7 @@ if model_result:
         "These modeled quantities use different units and are not subtracted into a net balance without a calibrated voltage/conversion model."
     )
 
-st.divider()
+st.space("small")
 subsection("Research framing")
 frame_a, frame_b = st.columns(2, gap="large")
 with frame_a:
@@ -785,7 +669,7 @@ with frame_b:
         "Only after those measurements and independent field validation would calibrated energy or outage-risk models be supportable."
     )
 
-with st.expander("Methodology, provenance, and limitations"):
+with st.expander("Methodology & limitations"):
     st.markdown(
         "**Observed** values are direct validated telemetry. **Derived** values are calculations from those observations. "
         "**Modeled** values appear only after explicit parameter entry."

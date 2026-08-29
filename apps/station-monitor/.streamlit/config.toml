@@ -10,8 +10,6 @@ codeBackgroundColor = "#EDF2EF"
 font = "sans-serif"
 headingFont = "sans-serif"
 baseFontSize = 15
-headingFontSizes = ["2.25rem", "1.65rem", "1.25rem", "1rem", "0.9rem", "0.8rem"]
-headingFontWeights = [650, 620, 600, 600, 600, 600]
 baseRadius = "8px"
 buttonRadius = "6px"
 showWidgetBorder = true
@@ -28,3 +26,5 @@ backgroundColor = "#F0F4F1"
 secondaryBackgroundColor = "#E6EDE9"
 borderColor = "#D5DFDA"
 
+[browser]
+gatherUsageStats = false

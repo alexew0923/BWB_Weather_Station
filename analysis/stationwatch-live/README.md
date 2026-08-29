@@ -18,8 +18,7 @@ Long-run reliability analysis belongs to the separate reliability-audit project.
   SCHEDULED INACTIVE
 - knows the site's nightly power schedule, so expected silence is not a fault
 - terminal CLI
-- Streamlit live dashboard
-- recent telemetry context (latest readings and their arrival gaps)
+- reusable latest-row context for external presentation layers
 - clear monitor-error handling, kept separate from an OFFLINE station status
 
 ## Project layout
@@ -28,9 +27,6 @@ Long-run reliability analysis belongs to the separate reliability-audit project.
 stationwatch-live/
 ├── station_health.py        shared health logic (no printing, no UI)
 ├── station_watch.py         terminal CLI
-├── app.py                   Streamlit dashboard
-├── dashboard.css            dashboard styling, loaded by app.py
-├── .streamlit/config.toml   theme: colours, fonts, radii
 ├── test_station_watch.py    tests, using controlled inputs only
 ├── .env.example             template for local configuration
 ├── requirements.txt
@@ -38,9 +34,9 @@ stationwatch-live/
 └── .gitignore
 ```
 
-`station_health.py` is the single source of truth for the thresholds and the
-health calculation. Both interfaces render the same `HealthReport`; neither
-computes its own timestamps or thresholds.
+`station_health.py` is the single source of truth for thresholds and health
+classification. The unified Streamlit presentation lives under
+`../../apps/station-monitor/` and consumes the same `HealthReport` as the CLI.
 
 ## Configuration
 
@@ -72,8 +68,8 @@ export STATIONWATCH_SHEET_URL="https://docs.google.com/spreadsheets/d/<sheet-id>
 ```
 
 If the variable is not set — or is set to something that is not a usable URL —
-both interfaces report a monitor error naming the setting. They never report the
-station as OFFLINE because of it, and never show a traceback.
+callers receive a monitor error naming the setting. The engine never reports the
+station as OFFLINE because of a configuration or observation failure.
 
 ## Running the CLI
 
@@ -95,35 +91,6 @@ Fresh telemetry is reaching Google Sheets.
 ```
 
 The CLI exits `0` on a successful check and `1` on a monitor error.
-
-## Running the dashboard
-
-Install the one dependency, then start Streamlit:
-
-```bash
-pip install -r requirements.txt
-```
-
-```bash
-streamlit run app.py
-```
-
-The dashboard leads with the current state, then telemetry age, the latest
-timestamp, last check and the expected operating window, the configured
-thresholds, recent arrival intervals,
-and recent readings. Its theme lives in `.streamlit/config.toml` and its layout
-styling in `dashboard.css`; the semantic status colours are defined once in
-`PALETTE` in `app.py` and shared by the stylesheet and the chart. Those colours
-hold their contrast against both the light and the dark background, so the page
-reads correctly in either theme without having to detect which is active.
-
-Refreshing is deliberately unhurried, because the station itself samples every
-few minutes:
-
-- **Refresh now** re-reads the Sheet immediately.
-- **Auto-refresh** re-reads it every 45 seconds while enabled.
-
-Results are never cached, so any refresh shows current Google Sheets data.
 
 ## Statuses
 
@@ -194,8 +161,7 @@ inference is deliberately not implemented.
 
 It says only that no telemetry is due. With site power off, a working station
 and a failed one produce exactly the same silence, so the state deliberately
-asserts nothing about the hardware. The dashboard hides the freshness limits
-while it is active rather than showing numbers that are not being applied.
+asserts nothing about the hardware.
 
 ### Daylight saving time
 
@@ -211,8 +177,8 @@ are then carried as UTC internally and converted back to Halifax only for
 display, because subtracting two aware datetimes that share one `tzinfo` object
 makes Python compare wall clocks and silently reintroduces the same error.
 
-An ambiguous newest reading is flagged on both the CLI and the dashboard rather
-than presented as certain.
+An ambiguous newest reading is flagged on the shared report rather than
+presented as certain.
 
 ### MONITOR ERROR is not OFFLINE
 
@@ -252,11 +218,9 @@ where the old localisation would have produced a false OFFLINE.
 
 ## Dependencies
 
-`streamlit` (1.62 or newer — the dashboard uses `st.html`, `st.space`,
-`st.skeleton` and `st.container(horizontal=...)`) and `altair`, which the chart
-imports directly. Everything else — CSV parsing, HTTP, timezones, and reading
-`.env` — uses the Python standard library, so the CLI runs with no third-party
-packages installed.
+CSV parsing, HTTP, timezones, and reading `.env` use the Python standard library,
+so the engine and CLI run with no third-party packages installed. UI dependencies
+are declared only by `apps/station-monitor/requirements.txt`.
 
 ## Future work
 
