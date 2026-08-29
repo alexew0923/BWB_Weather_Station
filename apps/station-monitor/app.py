@@ -29,6 +29,12 @@ live = st.Page(
     icon=":material/sensors:",
     url_path="live",
 )
+incidents = st.Page(
+    APP_DIR / "app_pages" / "incidents.py",
+    title="Incident explorer",
+    icon=":material/troubleshoot:",
+    url_path="incidents",
+)
 battery = st.Page(
     APP_DIR / "app_pages" / "battery.py",
     title="Battery analysis",
@@ -36,4 +42,4 @@ battery = st.Page(
     url_path="battery",
 )
 
-st.navigation([overview, live, battery], position="top").run()
+st.navigation([overview, live, incidents, battery], position="top").run()

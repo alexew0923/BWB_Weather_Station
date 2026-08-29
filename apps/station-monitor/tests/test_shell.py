@@ -36,6 +36,7 @@ class ShellTests(unittest.TestCase):
         engine_dirs = (
             REPOSITORY_ROOT / "analysis" / "stationwatch-live",
             REPOSITORY_ROOT / "analysis" / "battery-energy-analysis",
+            REPOSITORY_ROOT / "analysis" / "reliability-audit",
         )
         offenders = []
         for engine_dir in engine_dirs:

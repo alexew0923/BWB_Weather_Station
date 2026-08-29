@@ -80,6 +80,12 @@ class DashboardTests(unittest.TestCase):
                 os.environ["HISTORICAL_DATA_URL"] = previous_url
         self.assert_no_exceptions(app)
         self.assertIn("Battery & energy analysis", [item.value for item in app.title])
+        self.assertTrue(
+            any("Local historical data" in item.value for item in app.caption)
+        )
+        self.assertFalse(
+            any(str(Path(os.environ["BWB_HISTORICAL_CSV"]).resolve()) in item.value for item in app.caption)
+        )
 
     def test_energy_form_rejects_missing_fields_and_accepts_explicit_inputs(self):
         app = self.run_app()
@@ -110,7 +116,8 @@ class DashboardTests(unittest.TestCase):
 
     def test_missing_source_has_an_actionable_error_state(self):
         previous = os.environ.get("BWB_HISTORICAL_CSV")
-        os.environ["BWB_HISTORICAL_CSV"] = "/tmp/bwb-source-does-not-exist.csv"
+        missing_path = "/Users/example/private/bwb-source-does-not-exist.csv"
+        os.environ["BWB_HISTORICAL_CSV"] = missing_path
         try:
             app = self.run_app()
         finally:
@@ -120,6 +127,8 @@ class DashboardTests(unittest.TestCase):
                 os.environ["BWB_HISTORICAL_CSV"] = previous
         self.assertEqual(len(app.exception), 0)
         self.assertTrue(any("could not be found" in item.value for item in app.error))
+        self.assertFalse(any(missing_path in item.value for item in app.caption))
+        self.assertFalse(any(missing_path in item.value for item in app.code))
 
     def test_invalid_source_schema_fails_without_a_traceback(self):
         previous = os.environ.get("BWB_HISTORICAL_CSV")
@@ -159,6 +168,9 @@ class DashboardTests(unittest.TestCase):
                 os.environ["HISTORICAL_DATA_URL"] = previous_url
         self.assertEqual(len(app.exception), 0)
         self.assertTrue(any("URL is malformed" in item.value for item in app.error))
+        self.assertTrue(
+            any("Remote historical data" in item.value for item in app.caption)
+        )
 
     def test_missing_remote_configuration_is_actionable(self):
         previous_url = os.environ.get("HISTORICAL_DATA_URL")

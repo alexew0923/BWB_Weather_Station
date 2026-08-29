@@ -23,14 +23,14 @@ from services.battery_service import (
     model_daily_power_budget,
     normalize_historical_data_url,
     reliability_fingerprint,
+    resolve_historical_source,
+    safe_historical_error_detail,
 )
 
 
-LOCAL_DATA_SETTING = (os.environ.get("BWB_HISTORICAL_CSV") or "").strip()
-DATA_PATH = Path(LOCAL_DATA_SETTING).expanduser() if LOCAL_DATA_SETTING else None
-HISTORICAL_DATA_URL = (
-    os.environ.get(HISTORICAL_DATA_URL_VARIABLE) or ""
-).strip()
+HISTORICAL_SOURCE = resolve_historical_source()
+DATA_PATH = HISTORICAL_SOURCE["local_path"]
+HISTORICAL_DATA_URL = HISTORICAL_SOURCE["remote_url"]
 RELIABILITY_OUTPUT = Path(
     os.environ.get("BWB_RELIABILITY_OUTPUT_DIR", DEFAULT_RELIABILITY_OUTPUT)
 ).expanduser()
@@ -330,10 +330,11 @@ with st.container(horizontal=True, gap="small"):
     st.badge("Observed telemetry", icon=":material/sensors:", color="green")
     st.badge("Derived statistics", icon=":material/analytics:", color="blue")
     st.badge("Uncalibrated model", icon=":material/science:", color="orange")
+if HISTORICAL_SOURCE["display_label"]:
+    st.caption(f"Historical source: **{HISTORICAL_SOURCE['display_label']}**")
 
 if DATA_PATH is not None and not DATA_PATH.exists():
     st.error("The historical telemetry CSV could not be found.", icon=":material/error:")
-    st.code(str(DATA_PATH), language=None)
     st.caption(
         "Set BWB_HISTORICAL_CSV to a readable HistoricalData.csv path and restart the app."
     )
@@ -352,16 +353,16 @@ if DATA_PATH is None and not HISTORICAL_DATA_URL:
 try:
     with st.spinner("Validating telemetry and preparing battery research views…"):
         if DATA_PATH is not None:
-            source_label = str(DATA_PATH.resolve())
+            source_reference = str(DATA_PATH.resolve())
             analysis = cached_load_analysis(
-                source_label,
+                source_reference,
                 str(RELIABILITY_OUTPUT.resolve()),
                 analysis_fingerprint(DATA_PATH, RELIABILITY_OUTPUT),
             )
         else:
-            source_label = normalize_historical_data_url(HISTORICAL_DATA_URL)
+            source_reference = normalize_historical_data_url(HISTORICAL_DATA_URL)
             analysis = cached_load_remote_analysis(
-                source_label,
+                source_reference,
                 str(RELIABILITY_OUTPUT.resolve()),
                 reliability_fingerprint(RELIABILITY_OUTPUT),
             )
@@ -374,7 +375,7 @@ except HistoricalDataError as error:
     st.stop()
 except (SystemExit, ValueError, KeyError, OSError, pd.errors.ParserError) as error:
     st.error("The telemetry source could not be analyzed safely.", icon=":material/error:")
-    st.caption(f"Details: {error}")
+    st.caption(f"Details: {safe_historical_error_detail(error, HISTORICAL_SOURCE)}")
     st.caption("The source file was not modified. Correct the input and restart the app.")
     st.stop()
 
@@ -718,7 +719,7 @@ with st.expander("Methodology & limitations"):
         "**Modeled** values appear only after explicit parameter entry."
     )
     st.markdown(
-        f"- Source: `{source_label}`\n"
+        f"- Source: {HISTORICAL_SOURCE['display_label']}\n"
         f"- Reliability context: {summary['reliability_context_source']}\n"
         f"- Valid battery readings: {quality['valid_reading_count']:,}\n"
         f"- Missing since commissioning: {quality['missing_since_commissioning']:,}\n"
@@ -732,7 +733,12 @@ with st.expander("Methodology & limitations"):
     for parameter in summary["hardware_parameters_needed_for_calibration"]:
         st.markdown(f"- {parameter}")
     with st.expander("Validation trace"):
-        st.code(analysis["validation_log"].strip(), language=None)
+        st.code(
+            safe_historical_error_detail(
+                analysis["validation_log"].strip(), HISTORICAL_SOURCE
+            ),
+            language=None,
+        )
 
 st.caption(
     "Better With Bees battery research dashboard · America/Halifax local time · "

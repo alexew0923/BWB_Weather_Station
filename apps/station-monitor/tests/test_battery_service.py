@@ -15,6 +15,8 @@ from services.battery_service import (  # noqa: E402
     HistoricalDataError,
     fetch_historical_csv,
     normalize_historical_data_url,
+    resolve_historical_source,
+    safe_historical_error_detail,
 )
 
 
@@ -66,6 +68,36 @@ class HistoricalSourceTests(unittest.TestCase):
         with self.assertRaises(HistoricalDataError) as raised:
             normalize_historical_data_url("not-a-url")
         self.assertIn("malformed", raised.exception.summary.lower())
+
+    def test_shared_source_selection_is_local_first_then_remote(self):
+        local = resolve_historical_source(
+            {
+                "BWB_HISTORICAL_CSV": "/private/local/HistoricalData.csv",
+                "HISTORICAL_DATA_URL": "https://example.com/history.csv",
+            }
+        )
+        self.assertEqual(local["kind"], "local")
+        self.assertEqual(local["display_label"], "Local historical data")
+        self.assertIsNone(local["remote_url"])
+
+        remote = resolve_historical_source(
+            {"HISTORICAL_DATA_URL": "https://example.com/history.csv"}
+        )
+        self.assertEqual(remote["kind"], "remote")
+        self.assertEqual(remote["display_label"], "Remote historical data")
+        self.assertIsNone(remote["local_path"])
+
+        self.assertEqual(resolve_historical_source({})["kind"], "missing")
+
+    def test_local_error_details_do_not_expose_the_configured_path(self):
+        source = resolve_historical_source(
+            {"BWB_HISTORICAL_CSV": "/Users/example/private/HistoricalData.csv"}
+        )
+        detail = safe_historical_error_detail(
+            OSError("Could not open /Users/example/private/HistoricalData.csv"), source
+        )
+        self.assertNotIn("/Users/example", detail)
+        self.assertIn("local historical CSV", detail)
 
 
 if __name__ == "__main__":

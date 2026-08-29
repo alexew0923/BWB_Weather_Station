@@ -2,6 +2,7 @@
 
 import contextlib
 import io
+import os
 import tempfile
 from pathlib import Path
 from urllib.error import HTTPError, URLError
@@ -32,7 +33,10 @@ from energy_model import EnergyModelParameters, model_daily_power_budget  # noqa
 
 DEFAULT_DATA_PATH = DEFAULT_RELIABILITY_PROJECT / "data" / "HistoricalData.csv"
 DEFAULT_RELIABILITY_OUTPUT = DEFAULT_RELIABILITY_PROJECT / "audit_output"
+LOCAL_HISTORICAL_CSV_VARIABLE = "BWB_HISTORICAL_CSV"
 HISTORICAL_DATA_URL_VARIABLE = "HISTORICAL_DATA_URL"
+LOCAL_HISTORICAL_SOURCE_LABEL = "Local historical data"
+REMOTE_HISTORICAL_SOURCE_LABEL = "Remote historical data"
 
 
 class HistoricalDataError(Exception):
@@ -42,6 +46,47 @@ class HistoricalDataError(Exception):
         super().__init__(detail)
         self.summary = summary
         self.detail = detail
+
+
+def resolve_historical_source(environ=None):
+    """Select the shared historical source without changing local-first precedence."""
+    environment = os.environ if environ is None else environ
+    local_setting = (environment.get(LOCAL_HISTORICAL_CSV_VARIABLE) or "").strip()
+    remote_setting = (environment.get(HISTORICAL_DATA_URL_VARIABLE) or "").strip()
+    if local_setting:
+        return {
+            "kind": "local",
+            "local_path": Path(local_setting).expanduser(),
+            "remote_url": None,
+            "display_label": LOCAL_HISTORICAL_SOURCE_LABEL,
+        }
+    if remote_setting:
+        return {
+            "kind": "remote",
+            "local_path": None,
+            "remote_url": remote_setting,
+            "display_label": REMOTE_HISTORICAL_SOURCE_LABEL,
+        }
+    return {
+        "kind": "missing",
+        "local_path": None,
+        "remote_url": None,
+        "display_label": None,
+    }
+
+
+def safe_historical_error_detail(error, source):
+    """Keep local filesystem paths out of user-visible error details."""
+    detail = str(error)
+    path = source.get("local_path")
+    if source.get("kind") != "local" or path is None:
+        return detail
+
+    candidates = {str(path), str(path.absolute()), str(path.resolve())}
+    for candidate in sorted(candidates, key=len, reverse=True):
+        if candidate:
+            detail = detail.replace(candidate, "local historical CSV")
+    return detail
 
 
 def normalize_historical_data_url(url):
