@@ -1,3 +1,4 @@
-state.json
-stationwatch.log
-stationwatch-error.log
+__pycache__/
+*.pyc
+.venv/
+.streamlit/secrets.toml

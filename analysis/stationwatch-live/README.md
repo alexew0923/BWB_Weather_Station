@@ -1,106 +1,153 @@
 # stationwatch-live
 
-`stationwatch-live` answers one operational question: is fresh Better With Bees
-weather-station telemetry reaching Google Sheets?
+StationWatch Live provides a lightweight operational view of whether Better With
+Bees telemetry is currently reaching Google Sheets. It answers one question:
 
-Each invocation performs one check, compares the result with `state.json`, sends
-an email only when the status changes, saves the result, and exits. The supplied
-macOS `launchd` job runs it approximately every five minutes.
+> Is fresh telemetry currently reaching Google Sheets?
+
+It is an operational monitoring interface, not a historical analytics platform.
+Long-run reliability analysis belongs to the separate reliability-audit project.
+
+## Current capabilities
+
+- retrieves the public Google Sheets telemetry CSV
+- identifies the latest valid reading
+- handles Halifax-local timezone-aware timestamps (`ZoneInfo("America/Halifax")`)
+- computes telemetry age
+- classifies telemetry as HEALTHY / DELAYED / OFFLINE
+- terminal CLI
+- Streamlit live dashboard
+- recent telemetry context (latest readings and their arrival gaps)
+- clear monitor-error handling, kept separate from an OFFLINE station status
+
+## Project layout
+
+```
+stationwatch-live/
+├── station_health.py        shared health logic (no printing, no UI)
+├── station_watch.py         terminal CLI
+├── app.py                   Streamlit dashboard
+├── test_station_watch.py    tests, using controlled inputs only
+├── requirements.txt
+├── README.md
+└── .gitignore
+```
+
+`station_health.py` is the single source of truth for the thresholds and the
+health calculation. Both interfaces render the same `HealthReport`; neither
+computes its own timestamps or thresholds.
+
+## Running the CLI
+
+```bash
+python station_watch.py
+```
+
+Example output:
+
+```
+Better With Bees — StationWatch Live
+────────────────────────────────────
+Status:          HEALTHY
+Last telemetry:  2026-08-29 00:12 ADT
+Age:             4m 18s
+Checked:         2026-08-29 00:16 ADT
+
+Fresh telemetry is reaching Google Sheets.
+```
+
+The CLI exits `0` on a successful check and `1` on a monitor error.
+
+## Running the dashboard
+
+Install the one dependency, then start Streamlit:
+
+```bash
+pip install -r requirements.txt
+```
+
+```bash
+streamlit run app.py
+```
+
+The dashboard shows the current status as its most prominent element, followed by
+the latest telemetry timestamp, telemetry age, when StationWatch last checked,
+the configured thresholds, and recent telemetry context.
+
+Refreshing is deliberately unhurried, because the station itself samples every
+few minutes:
+
+- **Refresh now** re-reads the Sheet immediately.
+- **Auto-refresh** re-reads it every 45 seconds while enabled.
+
+Results are never cached, so any refresh shows current Google Sheets data.
 
 ## Statuses
 
-- **HEALTHY:** newest telemetry is no more than 10 minutes old.
-- **DELAYED:** newest telemetry is more than 10 but less than 30 minutes old.
-- **OFFLINE:** newest telemetry is at least 30 minutes old.
+| Status | Meaning |
+| --- | --- |
+| HEALTHY | newest telemetry is 10 minutes old or less |
+| DELAYED | newest telemetry is more than 10 and less than 30 minutes old |
+| OFFLINE | newest telemetry is 30 minutes old or more |
+| MONITOR ERROR | StationWatch has no usable observation of the source, so no status applies |
 
-The first run establishes a baseline without sending an alert. Later transitions
-send one email, including recovery to `HEALTHY`; an unchanged status sends
-nothing. Adjust `HEALTHY_THRESHOLD_MINUTES` and `OFFLINE_THRESHOLD_MINUTES` near
-the top of `station_watch.py` if needed.
+Thresholds live in `Thresholds` in `station_health.py`. The expected sampling
+interval (~5 min) is displayed for context and is not used in classification.
 
-## Email configuration
+### MONITOR ERROR is not OFFLINE
 
-The program uses SMTP with STARTTLS and requires these environment variables:
+These are different states and are never conflated:
 
-```sh
-export STATIONWATCH_SMTP_HOST="smtp.example.com"
-export STATIONWATCH_SMTP_PORT="587"       # optional; 587 is the default
-export STATIONWATCH_SMTP_USER="you@example.com"
-export STATIONWATCH_SMTP_PASSWORD="your-app-password"
-export STATIONWATCH_EMAIL_TO="you@example.com"
-export STATIONWATCH_EMAIL_FROM="you@example.com"  # optional; defaults to SMTP user
+- **MONITOR ERROR** — the local connection is down, Google is unreachable, the
+  request fails, or the CSV cannot be understood. StationWatch cannot observe the
+  data source, so the telemetry status is unknown.
+- **OFFLINE** — StationWatch reached Google Sheets successfully, and the newest
+  telemetry there is stale.
+
+A monitoring failure is never reported as an OFFLINE station.
+
+## Observation boundary
+
+StationWatch currently monitors the Google Sheets endpoint. An OFFLINE state
+means fresh telemetry is no longer reaching Sheets; it does not yet determine
+which upstream component failed.
+
+Potential upstream failure domains include the sensor/device operation, the
+transmitter, the ESP-NOW link, the receiver, Wi-Fi, the Apps Script upload, and
+Google Sheets ingestion. StationWatch can detect that delivery stopped; it cannot
+yet identify where. It never claims the station, transmitter, or receiver is
+broken.
+
+## Running the tests
+
+```bash
+python -m unittest -v
 ```
 
-Use an email-provider app password where available. Never put a password in the
-Python file, plist, or Git. No third-party Python packages are required.
+The tests use controlled inputs and never contact Google Sheets, so they cover
+HEALTHY, DELAYED, OFFLINE, and MONITOR ERROR without touching production
+telemetry.
 
-## Run and test manually
+## Dependencies
 
-```sh
-python3 station_watch.py
-python3 -m unittest -v
-```
+`streamlit` only, for the dashboard. Everything else — CSV parsing, HTTP,
+timezones — uses the Python standard library, so the CLI runs with no third-party
+packages installed.
 
-Send safe synthetic alerts without downloading the Sheet or changing
-`state.json`:
+## Future work
 
-```sh
-python3 station_watch.py --test-alert OFFLINE
-python3 station_watch.py --test-alert HEALTHY
-```
+Not implemented, and deliberately out of scope for this version:
 
-These messages use synthetic timestamps. They do not alter production data or
-the monitor's transition state.
+- transmitter heartbeat
+- packet sequence numbers
+- receiver health
+- ESP-NOW diagnostics
+- Wi-Fi and upload diagnostics
+- battery health
+- sensor health
+- component-level failure isolation
+- notifications/alerts, added later as a separate optional layer once an official
+  Better With Bees project email account is available
 
-## Schedule it on macOS
-
-The supplied `com.betterwithbees.stationwatch.plist` uses this project's actual
-path and the installed Python 3.14 executable. There is no project `.venv` at
-present. Make the SMTP variables available to your user `launchd` session with
-`launchctl setenv`. Prompt for the password so it does not appear directly in
-the command:
-
-```sh
-launchctl setenv STATIONWATCH_SMTP_HOST "smtp.example.com"
-launchctl setenv STATIONWATCH_SMTP_PORT "587"
-launchctl setenv STATIONWATCH_SMTP_USER "you@example.com"
-launchctl setenv STATIONWATCH_EMAIL_TO "you@example.com"
-read -s "smtp_password?SMTP app password: "
-launchctl setenv STATIONWATCH_SMTP_PASSWORD "$smtp_password"
-unset smtp_password
-```
-
-Install and start the job:
-
-```sh
-cp com.betterwithbees.stationwatch.plist ~/Library/LaunchAgents/
-launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/com.betterwithbees.stationwatch.plist
-```
-
-Verify it and inspect output:
-
-```sh
-launchctl print "gui/$(id -u)/com.betterwithbees.stationwatch"
-tail -n 50 stationwatch.log
-tail -n 50 stationwatch-error.log
-```
-
-Stop and disable it:
-
-```sh
-launchctl bootout "gui/$(id -u)" ~/Library/LaunchAgents/com.betterwithbees.stationwatch.plist
-```
-
-The `launchctl setenv` values apply to the current logged-in launchd session and
-may need to be set again after logout or restart. The plist is only supplied;
-this project does not install or start it automatically.
-
-## Observation limits
-
-`OFFLINE` means fresh telemetry is not reaching Google Sheets. A download or
-parsing failure is instead reported as `MONITOR ERROR`, and the saved station
-status is not changed.
-
-StationWatch does **not** diagnose the transmitter, receiver, ESP-NOW link,
-Wi-Fi, sensors, Apps Script, or root cause. Google Sheets remains its only
-observation point; those diagnostic layers are future work.
+This version has no notification layer of any kind and requires no credentials or
+configuration.
