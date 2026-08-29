@@ -54,6 +54,23 @@ class ShellTests(unittest.TestCase):
                         offenders.append(path)
         self.assertEqual(offenders, [])
 
+    def test_live_page_contains_monitor_error_without_exception(self):
+        previous = os.environ.get("STATIONWATCH_SHEET_URL")
+        os.environ["STATIONWATCH_SHEET_URL"] = "not-a-url"
+        try:
+            app = AppTest.from_file(
+                str(APP_DIR / "app_pages" / "live.py"), default_timeout=20
+            ).run(timeout=20)
+        finally:
+            if previous is None:
+                os.environ.pop("STATIONWATCH_SHEET_URL", None)
+            else:
+                os.environ["STATIONWATCH_SHEET_URL"] = previous
+        self.assertEqual([item.value for item in app.exception], [])
+        self.assertTrue(
+            any("monitoring failure" in item.value.lower() for item in app.caption)
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -17,6 +17,22 @@ APP_PATH = APP_DIR / "app_pages" / "battery.py"
 
 
 class DashboardTests(unittest.TestCase):
+    def setUp(self):
+        self.previous_local_source = os.environ.get("BWB_HISTORICAL_CSV")
+        os.environ["BWB_HISTORICAL_CSV"] = str(
+            APP_DIR.parents[1]
+            / "analysis"
+            / "reliability-audit"
+            / "data"
+            / "HistoricalData.csv"
+        )
+
+    def tearDown(self):
+        if self.previous_local_source is None:
+            os.environ.pop("BWB_HISTORICAL_CSV", None)
+        else:
+            os.environ["BWB_HISTORICAL_CSV"] = self.previous_local_source
+
     def run_app(self, timeout=45):
         return AppTest.from_file(str(APP_PATH), default_timeout=timeout).run(
             timeout=timeout
@@ -51,6 +67,19 @@ class DashboardTests(unittest.TestCase):
         app.run(timeout=45)
         self.assert_no_exceptions(app)
         self.assertEqual(app.selectbox[0].value, 0)
+
+    def test_local_override_takes_precedence_over_remote_configuration(self):
+        previous_url = os.environ.get("HISTORICAL_DATA_URL")
+        os.environ["HISTORICAL_DATA_URL"] = "not-a-url"
+        try:
+            app = self.run_app()
+        finally:
+            if previous_url is None:
+                os.environ.pop("HISTORICAL_DATA_URL", None)
+            else:
+                os.environ["HISTORICAL_DATA_URL"] = previous_url
+        self.assert_no_exceptions(app)
+        self.assertIn("Battery & energy analysis", [item.value for item in app.title])
 
     def test_energy_form_rejects_missing_fields_and_accepts_explicit_inputs(self):
         app = self.run_app()
@@ -108,6 +137,51 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(len(app.exception), 0)
         self.assertTrue(
             any("could not be analyzed safely" in item.value for item in app.error)
+        )
+
+    def test_malformed_remote_source_fails_without_a_traceback(self):
+        previous_url = os.environ.get("HISTORICAL_DATA_URL")
+        os.environ.pop("BWB_HISTORICAL_CSV", None)
+        os.environ["HISTORICAL_DATA_URL"] = "not-a-url"
+        try:
+            app = self.run_app()
+        finally:
+            os.environ["BWB_HISTORICAL_CSV"] = str(
+                APP_DIR.parents[1]
+                / "analysis"
+                / "reliability-audit"
+                / "data"
+                / "HistoricalData.csv"
+            )
+            if previous_url is None:
+                os.environ.pop("HISTORICAL_DATA_URL", None)
+            else:
+                os.environ["HISTORICAL_DATA_URL"] = previous_url
+        self.assertEqual(len(app.exception), 0)
+        self.assertTrue(any("URL is malformed" in item.value for item in app.error))
+
+    def test_missing_remote_configuration_is_actionable(self):
+        previous_url = os.environ.get("HISTORICAL_DATA_URL")
+        os.environ.pop("BWB_HISTORICAL_CSV", None)
+        os.environ.pop("HISTORICAL_DATA_URL", None)
+        try:
+            app = self.run_app()
+        finally:
+            os.environ["BWB_HISTORICAL_CSV"] = str(
+                APP_DIR.parents[1]
+                / "analysis"
+                / "reliability-audit"
+                / "data"
+                / "HistoricalData.csv"
+            )
+            if previous_url is not None:
+                os.environ["HISTORICAL_DATA_URL"] = previous_url
+        self.assertEqual(len(app.exception), 0)
+        self.assertTrue(
+            any("not configured" in item.value.lower() for item in app.error)
+        )
+        self.assertTrue(
+            any("HISTORICAL_DATA_URL" in item.value for item in app.caption)
         )
 
 

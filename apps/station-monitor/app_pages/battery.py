@@ -9,19 +9,28 @@ import pandas as pd
 import streamlit as st
 
 from services.battery_service import (
-    DEFAULT_DATA_PATH,
     DEFAULT_RELIABILITY_OUTPUT,
     EnergyModelParameters,
+    HISTORICAL_DATA_URL_VARIABLE,
+    HistoricalDataError,
     MIN_TREND_COVERAGE,
     MIN_TREND_SAMPLES,
     STATION_TIMEZONE,
     analysis_fingerprint,
+    fetch_historical_csv,
     load_battery_analysis,
+    load_battery_analysis_from_csv_text,
     model_daily_power_budget,
+    normalize_historical_data_url,
+    reliability_fingerprint,
 )
 
 
-DATA_PATH = Path(os.environ.get("BWB_HISTORICAL_CSV", DEFAULT_DATA_PATH)).expanduser()
+LOCAL_DATA_SETTING = (os.environ.get("BWB_HISTORICAL_CSV") or "").strip()
+DATA_PATH = Path(LOCAL_DATA_SETTING).expanduser() if LOCAL_DATA_SETTING else None
+HISTORICAL_DATA_URL = (
+    os.environ.get(HISTORICAL_DATA_URL_VARIABLE) or ""
+).strip()
 RELIABILITY_OUTPUT = Path(
     os.environ.get("BWB_RELIABILITY_OUTPUT_DIR", DEFAULT_RELIABILITY_OUTPUT)
 ).expanduser()
@@ -54,6 +63,14 @@ def cached_load_analysis(csv_path, reliability_output, fingerprint):
     """Cache deterministic engine output in the presentation layer only."""
     del fingerprint  # The value exists solely as a cache key.
     return load_battery_analysis(csv_path, reliability_output)
+
+
+@st.cache_data(ttl=600, max_entries=4, show_spinner=False)
+def cached_load_remote_analysis(url, reliability_output, fingerprint):
+    """Fetch and analyze remote history with a bounded Streamlit-side cache."""
+    del fingerprint  # Optional local reliability exports form this cache key.
+    csv_text = fetch_historical_csv(url)
+    return load_battery_analysis_from_csv_text(csv_text, reliability_output)
 
 
 def v(value, digits=3, suffix=" V"):
@@ -314,7 +331,7 @@ with st.container(horizontal=True, gap="small"):
     st.badge("Derived statistics", icon=":material/analytics:", color="blue")
     st.badge("Uncalibrated model", icon=":material/science:", color="orange")
 
-if not DATA_PATH.exists():
+if DATA_PATH is not None and not DATA_PATH.exists():
     st.error("The historical telemetry CSV could not be found.", icon=":material/error:")
     st.code(str(DATA_PATH), language=None)
     st.caption(
@@ -322,13 +339,39 @@ if not DATA_PATH.exists():
     )
     st.stop()
 
+if DATA_PATH is None and not HISTORICAL_DATA_URL:
+    st.error(
+        "Historical telemetry is not configured.",
+        icon=":material/settings_alert:",
+    )
+    st.caption(
+        f"Set {HISTORICAL_DATA_URL_VARIABLE} to a public Google Sheets edit or CSV export URL."
+    )
+    st.stop()
+
 try:
     with st.spinner("Validating telemetry and preparing battery research views…"):
-        analysis = cached_load_analysis(
-            str(DATA_PATH.resolve()),
-            str(RELIABILITY_OUTPUT.resolve()),
-            analysis_fingerprint(DATA_PATH, RELIABILITY_OUTPUT),
-        )
+        if DATA_PATH is not None:
+            source_label = str(DATA_PATH.resolve())
+            analysis = cached_load_analysis(
+                source_label,
+                str(RELIABILITY_OUTPUT.resolve()),
+                analysis_fingerprint(DATA_PATH, RELIABILITY_OUTPUT),
+            )
+        else:
+            source_label = normalize_historical_data_url(HISTORICAL_DATA_URL)
+            analysis = cached_load_remote_analysis(
+                source_label,
+                str(RELIABILITY_OUTPUT.resolve()),
+                reliability_fingerprint(RELIABILITY_OUTPUT),
+            )
+except HistoricalDataError as error:
+    st.error(error.summary, icon=":material/cloud_off:")
+    st.caption(f"Details: {error.detail}")
+    st.caption(
+        f"Set {HISTORICAL_DATA_URL_VARIABLE} to a public Google Sheets CSV export and retry."
+    )
+    st.stop()
 except (SystemExit, ValueError, KeyError, OSError, pd.errors.ParserError) as error:
     st.error("The telemetry source could not be analyzed safely.", icon=":material/error:")
     st.caption(f"Details: {error}")
@@ -675,7 +718,7 @@ with st.expander("Methodology & limitations"):
         "**Modeled** values appear only after explicit parameter entry."
     )
     st.markdown(
-        f"- Source: `{DATA_PATH}`\n"
+        f"- Source: `{source_label}`\n"
         f"- Reliability context: {summary['reliability_context_source']}\n"
         f"- Valid battery readings: {quality['valid_reading_count']:,}\n"
         f"- Missing since commissioning: {quality['missing_since_commissioning']:,}\n"

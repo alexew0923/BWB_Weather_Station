@@ -2,7 +2,11 @@
 
 import contextlib
 import io
+import tempfile
 from pathlib import Path
+from urllib.error import HTTPError, URLError
+from urllib.parse import parse_qs, urlparse
+from urllib.request import urlopen
 
 from services import analysis_imports as _analysis_imports  # noqa: F401
 from battery_analysis import (  # noqa: E402
@@ -28,6 +32,78 @@ from energy_model import EnergyModelParameters, model_daily_power_budget  # noqa
 
 DEFAULT_DATA_PATH = DEFAULT_RELIABILITY_PROJECT / "data" / "HistoricalData.csv"
 DEFAULT_RELIABILITY_OUTPUT = DEFAULT_RELIABILITY_PROJECT / "audit_output"
+HISTORICAL_DATA_URL_VARIABLE = "HISTORICAL_DATA_URL"
+
+
+class HistoricalDataError(Exception):
+    """The app could not retrieve a usable historical CSV source."""
+
+    def __init__(self, summary, detail):
+        super().__init__(detail)
+        self.summary = summary
+        self.detail = detail
+
+
+def normalize_historical_data_url(url):
+    """Validate a URL and convert Google Sheets edit links to CSV exports."""
+    value = (url or "").strip()
+    try:
+        parsed = urlparse(value)
+    except ValueError as error:
+        raise HistoricalDataError(
+            "The historical telemetry URL is malformed.", str(error)
+        ) from error
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise HistoricalDataError(
+            "The historical telemetry URL is malformed.",
+            f"{HISTORICAL_DATA_URL_VARIABLE} must be an HTTP or HTTPS URL.",
+        )
+
+    marker = "/spreadsheets/d/"
+    if parsed.netloc == "docs.google.com" and marker in parsed.path:
+        sheet_id = parsed.path.split(marker, 1)[1].split("/", 1)[0]
+        query = parse_qs(parsed.query)
+        fragment = parse_qs(parsed.fragment)
+        gid = (query.get("gid") or fragment.get("gid") or ["0"])[0]
+        if not sheet_id or not gid.isdigit():
+            raise HistoricalDataError(
+                "The Google Sheets historical URL is incomplete.",
+                "A spreadsheet ID and numeric gid are required.",
+            )
+        return (
+            f"https://docs.google.com/spreadsheets/d/{sheet_id}/"
+            f"export?format=csv&gid={gid}"
+        )
+    return value
+
+
+def fetch_historical_csv(url, timeout=30):
+    """Fetch UTF-8 CSV text for the app without involving the analysis engine."""
+    export_url = normalize_historical_data_url(url)
+    try:
+        with urlopen(export_url, timeout=timeout) as response:
+            text = response.read().decode("utf-8-sig")
+    except ValueError as error:
+        raise HistoricalDataError(
+            "The historical telemetry URL is malformed.", str(error)
+        ) from error
+    except (HTTPError, URLError, TimeoutError, OSError, UnicodeError) as error:
+        raise HistoricalDataError(
+            "The historical telemetry Sheet could not be retrieved.", str(error)
+        ) from error
+
+    stripped = text.lstrip()
+    if not stripped:
+        raise HistoricalDataError(
+            "The historical telemetry Sheet returned no data.",
+            "The CSV response was empty.",
+        )
+    if stripped[:100].lower().startswith(("<!doctype html", "<html")):
+        raise HistoricalDataError(
+            "The historical telemetry URL did not return CSV data.",
+            "Use a published or publicly readable Google Sheets CSV export.",
+        )
+    return text
 
 
 def file_fingerprint(path):
@@ -43,6 +119,13 @@ def analysis_fingerprint(csv_path, reliability_output):
     """Fingerprint the historical source and optional reliability exports."""
     return (
         file_fingerprint(csv_path),
+        *reliability_fingerprint(reliability_output),
+    )
+
+
+def reliability_fingerprint(reliability_output):
+    """Fingerprint optional local context without tying remote data to a file."""
+    return (
         file_fingerprint(Path(reliability_output) / "outage_intervals.csv"),
         file_fingerprint(Path(reliability_output) / "daily_reliability.csv"),
     )
@@ -79,3 +162,18 @@ def load_battery_analysis(csv_path, reliability_output):
         "summary": summary,
         "validation_log": validation_output.getvalue(),
     }
+
+
+def load_battery_analysis_from_csv_text(csv_text, reliability_output):
+    """Bridge fetched CSV text to the unchanged path-based analysis engine."""
+    temporary_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", suffix=".csv", delete=False
+        ) as handle:
+            handle.write(csv_text)
+            temporary_path = Path(handle.name)
+        return load_battery_analysis(str(temporary_path), reliability_output)
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)

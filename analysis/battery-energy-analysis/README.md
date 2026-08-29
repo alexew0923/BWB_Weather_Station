@@ -9,6 +9,8 @@ relationship to those reliability events.
 It includes a reproducible CLI analysis engine. The unified Streamlit UI under
 `../../apps/station-monitor/` calls the same functions in `battery_analysis.py`;
 it does not maintain a second set of formulas or write over CLI artifacts.
+The UI fetches its configurable historical Google Sheets CSV in its own service
+layer; this engine and its CLI remain path-based and framework-independent.
 
 ## Current capabilities
 

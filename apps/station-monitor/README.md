@@ -30,7 +30,7 @@ Streamlit, and the app does not duplicate status or battery calculations.
 → current operational delivery state
 
 /battery
-→ analysis/reliability-audit/data/HistoricalData.csv by default
+→ configurable Google Sheets CSV export fetched by the app service
 → historical battery and reliability research
 ```
 
@@ -50,7 +50,27 @@ Alternatively, copy `analysis/stationwatch-live/.env.example` to
 `analysis/stationwatch-live/.env`. Exported environment variables take
 precedence. Do not commit local configuration or credentials.
 
-The battery page uses project-relative defaults. Optional overrides are:
+The deployed battery page requires `HISTORICAL_DATA_URL`. Set it to either a
+Google Sheets edit URL or a CSV export URL:
+
+```bash
+export HISTORICAL_DATA_URL="https://docs.google.com/spreadsheets/d/<sheet-id>/edit?gid=<gid>#gid=<gid>"
+```
+
+The app validates and normalizes Google Sheets links to
+`/export?format=csv&gid=...`, fetches them in the app/service layer, and caches
+the resulting analysis for ten minutes. Network, permission, HTML-response,
+empty-response, and analysis-validation failures remain page-specific and do not
+break `/live`.
+
+If neither `BWB_HISTORICAL_CSV` nor `HISTORICAL_DATA_URL` is configured, the
+battery page shows a configuration message and remains safely isolated from the
+other routes.
+
+If `BWB_HISTORICAL_CSV` is explicitly set, it takes precedence and the dashboard
+uses that local file instead. This remains an optional override for local
+development and isolated UI tests. The battery CLI and core tests continue to
+accept file paths directly:
 
 ```bash
 export BWB_HISTORICAL_CSV=/path/to/HistoricalData.csv
@@ -73,8 +93,9 @@ Routes are explicit:
 - `/battery` — battery and energy analysis
 
 Live monitoring is intentionally uncached and can auto-refresh every 45 seconds.
-Historical analysis is cached in the UI layer using source-file fingerprints;
-changing the CSV or reliability exports invalidates that cache.
+Remote historical analysis is cached in the UI layer for ten minutes. A local
+override uses source-file fingerprints, so changing the CSV or reliability
+exports invalidates that cache.
 
 ## Limits
 
