@@ -5,6 +5,7 @@ reliability conclusion. Presentation code, figure generation and console
 formatting are not tested -- a wrong plot is visible, a wrong denominator is not.
 """
 
+import os
 import unittest
 from datetime import date, datetime, timedelta
 
@@ -30,7 +31,13 @@ from reliability_metrics import (
     reconcile_transmissions,
 )
 
-HISTORICAL_CSV = "data/HistoricalData.csv"
+# Resolved against this file, not the working directory, so the suite behaves the
+# same from the repository root as from inside this package. The export itself is
+# deliberately untracked (the root .gitignore excludes *.csv), so the one test
+# that needs it skips cleanly on a fresh clone instead of erroring.
+HISTORICAL_CSV = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                              "data", "HistoricalData.csv")
+HAS_HISTORICAL_CSV = os.path.exists(HISTORICAL_CSV)
 
 
 def local(text):
@@ -158,6 +165,8 @@ class ReconciliationTests(unittest.TestCase):
         self.assertEqual(result["surplus"], 1)
         self.assertEqual(result["residual"], 0)
 
+    @unittest.skipUnless(HAS_HISTORICAL_CSV,
+                         "data/HistoricalData.csv is not present (it is untracked)")
     def test_identity_holds_on_the_real_dataset(self):
         # The regression this whole change exists for: the shipped audit
         # published 24,833 received + 48,828 missed against 69,852 expected,

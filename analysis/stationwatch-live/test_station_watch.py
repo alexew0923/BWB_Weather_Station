@@ -187,10 +187,25 @@ class ScheduleAwareStatusTests(unittest.TestCase):
         for claim in ("healthy", "fresh telemetry is reaching"):
             self.assertNotIn(claim, summary)
 
-    def test_startup_grace_after_the_window_reopens(self):
-        # Telemetry is hours old at 06:05 purely because the power was off.
-        self.assertEqual(self.at(6, 5, 425).status, Status.HEALTHY)
-        self.assertEqual(self.at(6, 20, 440).status, Status.HEALTHY)
+    def test_startup_grace_reports_awaiting_not_healthy(self):
+        # Telemetry is hours old at 06:05 purely because the power was off, so
+        # this must not be OFFLINE -- but nothing has arrived either, so calling
+        # it HEALTHY would describe a station that died overnight as working.
+        for hour, minute, age in [(6, 5, 425), (6, 20, 440)]:
+            report = self.at(hour, minute, age)
+            self.assertEqual(report.status, Status.AWAITING_TELEMETRY)
+            self.assertNotIn("reaching Google Sheets", report.summary)
+
+    def test_awaiting_never_claims_fresh_telemetry(self):
+        summary = self.at(6, 5, 425).summary.lower()
+        self.assertIn("has not arrived yet", summary)
+        self.assertIn("7h 5m", summary)
+
+    def test_grace_does_not_mask_a_station_that_never_returns(self):
+        # The escalation the grace must not prevent.
+        self.assertEqual(self.at(6, 5, 425).status, Status.AWAITING_TELEMETRY)
+        self.assertEqual(self.at(6, 30, 450).status, Status.DELAYED)
+        self.assertEqual(self.at(6, 50, 470).status, Status.OFFLINE)
 
     def test_grace_expires_and_escalates_normally(self):
         # Grace ends 06:15; the ordinary 10/30 minute limits run from there.
@@ -199,6 +214,16 @@ class ScheduleAwareStatusTests(unittest.TestCase):
 
     def test_fresh_telemetry_after_reopening_is_healthy_immediately(self):
         self.assertEqual(self.at(7, 0, 3).status, Status.HEALTHY)
+
+    def test_fresh_reading_inside_the_grace_is_healthy_not_awaiting(self):
+        # A real reading landed at 06:17; the grace is irrelevant once it has.
+        self.assertEqual(self.at(6, 20, 3).status, Status.HEALTHY)
+
+    def test_awaiting_only_applies_where_a_shutdown_regime_exists(self):
+        # Under continuous operation there is no reopening, so hours-old
+        # telemetry at 06:05 is an ordinary outage.
+        january = datetime(2026, 1, 15, 6, 5, tzinfo=HALIFAX).astimezone(UTC)
+        self.assertEqual(monitor_with(425, now=january).check().status, Status.OFFLINE)
 
     def test_overnight_silence_before_the_regime_is_still_offline(self):
         self.assertEqual(self.at(2, 0, 180, day=15).status, Status.SCHEDULED_INACTIVE)
@@ -392,6 +417,12 @@ class MonitorErrorTests(unittest.TestCase):
             raised.exception.summary, "StationWatch could not retrieve the telemetry source."
         )
 
+    def test_malformed_url_is_a_monitor_error_not_a_traceback(self):
+        source = TelemetrySource(url="not a url")
+        with self.assertRaises(MonitorError) as raised:
+            source.download()
+        self.assertIn(SHEET_URL_VARIABLE, raised.exception.summary)
+
     def test_cli_reports_monitor_error_and_never_offline(self):
         monitor = monitor_with(error=MonitorError("network unavailable"))
         with patch.object(station_watch, "StationMonitor", return_value=monitor):
@@ -403,6 +434,7 @@ class MonitorErrorTests(unittest.TestCase):
         self.assertIn("cannot be determined", output)
         self.assertNotIn("OFFLINE", output)
         self.assertNotIn("SCHEDULED INACTIVE", output)
+        self.assertNotIn("AWAITING TELEMETRY", output)
 
 
 class CliRenderingTests(unittest.TestCase):

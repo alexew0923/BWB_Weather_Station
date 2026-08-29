@@ -40,7 +40,7 @@ def render_report(report):
             "Note: the newest timestamp falls in a daylight-saving transition "
             "hour, so its exact instant cannot be read from the source alone."
         )
-    if report.status in (Status.DELAYED, Status.OFFLINE):
+    if report.status in (Status.AWAITING_TELEMETRY, Status.DELAYED, Status.OFFLINE):
         lines.append(
             "This reports the Google Sheets observation point only; it does not "
             "identify which upstream component failed."

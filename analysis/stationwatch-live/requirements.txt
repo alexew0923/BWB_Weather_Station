@@ -1,1 +1,12 @@
-streamlit>=1.37
+# Pinned to the versions this dashboard is actually validated against.
+#
+# app.py uses st.html, st.space, st.skeleton, st.container(horizontal=...),
+# st.metric(border=...) and width="stretch". None of these exist in the old
+# >=1.37 floor this file used to declare, so a clean install could resolve a
+# Streamlit that crashes on import. 1.62 is the release the app is tested on.
+streamlit>=1.62
+
+# Streamlit installs Altair anyway, but app.py imports it directly, so it is
+# declared here rather than relied on as a transitive dependency. The lower
+# bound matches Streamlit's own constraint (altair>=5.0.0,<7).
+altair>=5.0

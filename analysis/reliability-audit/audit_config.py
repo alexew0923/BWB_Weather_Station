@@ -99,8 +99,9 @@ OPERATING_REGIMES = (
 EXPECTED_TRANSMISSIONS_24H = 288       # before the changeover
 EXPECTED_TRANSMISSIONS_POWERED = 204   # after: 17 powered hours * 12/hour
 
-ACTIVE_HOUR_START = 6   # first hour of the powered window (inclusive)
-ACTIVE_HOUR_END = 22    # last  hour of the powered window (inclusive)
+# The powered window itself lives in OPERATING_REGIMES above and nowhere else;
+# a second pair of ACTIVE_HOUR_* constants used to sit here, unused, where
+# editing them to change the schedule would have silently done nothing.
 NIGHT_HOURS = [23, 0, 1, 2, 3, 4, 5]   # the hours lost after the changeover
 
 

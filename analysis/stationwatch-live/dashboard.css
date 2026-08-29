@@ -73,6 +73,7 @@
 }
 
 .sw-hero[data-state="healthy"] { --sw-accent: var(--sw-green); }
+.sw-hero[data-state="awaiting"] { --sw-accent: var(--sw-amber); }
 .sw-hero[data-state="delayed"] { --sw-accent: var(--sw-amber); }
 .sw-hero[data-state="offline"] { --sw-accent: var(--sw-red); }
 .sw-hero[data-state="inactive"] { --sw-accent: var(--sw-gray); }

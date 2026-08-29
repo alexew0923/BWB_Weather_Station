@@ -44,6 +44,7 @@ MONO_STACK = "'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace"
 # Which palette entry each state uses. dashboard.css keys off the same slugs.
 STATE_SLUGS = {
     Status.HEALTHY: "healthy",
+    Status.AWAITING_TELEMETRY: "awaiting",
     Status.DELAYED: "delayed",
     Status.OFFLINE: "offline",
     Status.SCHEDULED_INACTIVE: "inactive",
@@ -282,6 +283,14 @@ def render_check():
             "Telemetry age",
             report.age_text,
             _hero_facts(report),
+        )
+
+    if report.status is Status.AWAITING_TELEMETRY:
+        st.caption(
+            ":material/hourglass_top: Within the "
+            f"{report.thresholds.startup_grace_minutes:g}-minute startup grace after the "
+            "operating window reopened. The ordinary freshness limits resume once it "
+            "expires, so a station that does not return is still reported."
         )
 
     if report.latest_is_ambiguous:

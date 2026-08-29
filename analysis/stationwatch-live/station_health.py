@@ -107,9 +107,15 @@ def sheet_url():
 # duplicated rather than shared because StationWatch deliberately depends on
 # nothing outside the standard library. If the schedule changes, both must move.
 #
-# LIMITATION: the shutdown is documented in the firmware README and in the
-# audit's empirically-pinned changeover date, not in any machine-readable
-# configuration from the school. Confirm before trusting the exact hours.
+# LIMITATION: this schedule is a configured assumption, not a measurement. The
+# hours come from the project README and from the audit's empirically-pinned
+# changeover date, not from any machine-readable configuration provided by the
+# school. StationWatch does NOT verify the schedule against recent traffic the
+# way the reliability audit's verify_baseline_regimes() does, so if the powered
+# window is narrowed it will report OFFLINE during the new dark period until
+# these values are updated by hand. The reverse error is covered: telemetry that
+# genuinely arrives during a supposedly inactive window is reported on its own
+# merits rather than being suppressed (see StationMonitor.classify).
 
 CONTINUOUS = "continuous"
 
@@ -251,6 +257,7 @@ class Status(Enum):
     """A telemetry-delivery classification, plus how to describe it."""
 
     HEALTHY = "HEALTHY"
+    AWAITING_TELEMETRY = "AWAITING TELEMETRY"
     DELAYED = "DELAYED"
     OFFLINE = "OFFLINE"
     SCHEDULED_INACTIVE = "SCHEDULED INACTIVE"
@@ -262,6 +269,15 @@ class Status(Enum):
         """Return a plain sentence about telemetry delivery, not about hardware."""
         if self is Status.HEALTHY:
             return "Fresh telemetry is reaching Google Sheets."
+        if self is Status.AWAITING_TELEMETRY:
+            # The powered window has reopened but nothing has arrived yet. Saying
+            # HEALTHY here would assert fresh telemetry that does not exist, and
+            # a station that failed overnight would be described as working every
+            # morning for the length of the startup grace.
+            return (
+                f"The operating window has reopened and the first reading has not "
+                f"arrived yet. The newest telemetry is {age_text} old."
+            )
         if self is Status.DELAYED:
             return "Telemetry is arriving later than expected."
         if self is Status.SCHEDULED_INACTIVE:
@@ -382,6 +398,18 @@ class TelemetrySource:
         try:
             with urlopen(url, timeout=self.timeout) as response:
                 return response.read().decode("utf-8-sig")
+        except ValueError as error:
+            # urlopen raises ValueError for a URL with no usable scheme, e.g. a
+            # typo in .env. That is a configuration fault, and configuration
+            # faults are monitor errors here -- never a station status, and never
+            # a traceback in front of a user.
+            raise MonitorError(
+                f"the configured telemetry URL is not usable: {error}",
+                summary=(
+                    f"StationWatch's telemetry URL is not a valid URL "
+                    f"({SHEET_URL_VARIABLE})."
+                ),
+            ) from error
         except (HTTPError, URLError, TimeoutError, OSError, UnicodeError) as error:
             raise MonitorError(f"could not retrieve the telemetry source: {error}") from error
 
@@ -506,7 +534,17 @@ class StationMonitor:
             reference = max(latest, grace_until)
 
         classification_age = max(0.0, (checked_at - reference).total_seconds())
-        return self.thresholds.classify(classification_age / 60), classification_age
+        status = self.thresholds.classify(classification_age / 60)
+
+        # The startup grace may be the only reason this is not DELAYED or
+        # OFFLINE. In that case the telemetry itself is still stale, so report
+        # that plainly instead of borrowing the HEALTHY label from the grace.
+        if status is Status.HEALTHY:
+            true_age_minutes = (checked_at - latest).total_seconds() / 60
+            if true_age_minutes > self.thresholds.healthy_max_minutes:
+                return Status.AWAITING_TELEMETRY, classification_age
+
+        return status, classification_age
 
 
 def check_station_health(**kwargs):

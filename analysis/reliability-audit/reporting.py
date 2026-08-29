@@ -302,8 +302,12 @@ def build_anomaly_notes(df, validation, daily_reliability, outages):
     if zero_columns:
         notes.append(
             "literal zeros survive in " + ", ".join(zero_columns)
-            + " even though doGet.js blanks 0 before writing -- 0 and 'missing' "
-              "are conflated at source and cannot be separated downstream"
+            + " -- doGet.js has NOT blanked zeros uniformly across this dataset: "
+              "zero-blanking was added 2025-12-16 and only covered Temperature "
+              "from 2026-04-05, so a blank cell means 'NaN' in the early data and "
+              "'NaN or exactly zero' later. 0 and 'missing' are conflated at "
+              "source from those dates onward and cannot be separated downstream "
+              "(see README, Ingestion-Behavior Changes)"
         )
 
     # Commissioning first: a sensor switched on mid-deployment also shows a huge

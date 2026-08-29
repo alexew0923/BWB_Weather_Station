@@ -14,7 +14,8 @@ Long-run reliability analysis belongs to the separate reliability-audit project.
 - identifies the latest valid reading
 - handles Halifax-local timestamps, including daylight-saving transitions
 - computes telemetry age on a UTC timeline
-- classifies telemetry as HEALTHY / DELAYED / OFFLINE / SCHEDULED INACTIVE
+- classifies telemetry as HEALTHY / AWAITING TELEMETRY / DELAYED / OFFLINE /
+  SCHEDULED INACTIVE
 - knows the site's nightly power schedule, so expected silence is not a fault
 - terminal CLI
 - Streamlit live dashboard
@@ -44,9 +45,18 @@ computes its own timestamps or thresholds.
 ## Configuration
 
 The telemetry URL points at a specific Google Sheet, so it is supplied by the
-environment and is never committed. Everything else — the `America/Halifax`
-timezone, the expected sampling interval, and the health thresholds — is
-ordinary configuration that lives in source control.
+environment rather than hard-coded. Everything else — the `America/Halifax`
+timezone, the operating schedule, the expected sampling interval, and the health
+thresholds — is ordinary configuration that lives in source control.
+
+**This is configuration hygiene, not secrecy.** The monitored Sheet is
+intentionally publicly readable: it is the same telemetry published on
+betterwithbees.ca, its CSV export answers unauthenticated requests, and the
+spreadsheet ID is already committed in `scripts/apps_script/doGet.js`. Keeping
+the URL in `.env` means a deployment can be pointed somewhere else without
+editing source, and it keeps a deployment detail out of the diff — it does not
+protect anything. Do not treat `.env` here as a secret store, and do not assume
+the Sheet is access-controlled.
 
 Copy the template and fill in the real CSV export URL of the telemetry Sheet:
 
@@ -61,8 +71,9 @@ the file, so a scheduler or CI job can supply it instead:
 export STATIONWATCH_SHEET_URL="https://docs.google.com/spreadsheets/d/<sheet-id>/export?format=csv&gid=0"
 ```
 
-If the variable is not set, both interfaces report a monitor error naming the
-missing setting. They never report the station as OFFLINE because of it.
+If the variable is not set — or is set to something that is not a usable URL —
+both interfaces report a monitor error naming the setting. They never report the
+station as OFFLINE because of it, and never show a traceback.
 
 ## Running the CLI
 
@@ -119,6 +130,7 @@ Results are never cached, so any refresh shows current Google Sheets data.
 | Status | Meaning |
 | --- | --- |
 | HEALTHY | newest telemetry is 10 minutes old or less |
+| AWAITING TELEMETRY | the operating window has reopened and the first reading has not arrived yet |
 | DELAYED | newest telemetry is more than 10 and less than 30 minutes old |
 | OFFLINE | newest telemetry is 30 minutes old or more |
 | SCHEDULED INACTIVE | the site is outside its powered window, so no telemetry is due |
@@ -154,14 +166,29 @@ covers boot, association and the first sampling cycle; after it expires the
 ordinary 10/30-minute limits take over, so a station that fails to come back is
 still reported.
 
+During that grace the status is **AWAITING TELEMETRY**, not HEALTHY. The grace
+suppresses a premature fault, but it is not evidence that anything arrived, and
+reporting HEALTHY over hours-old data would describe a station that died
+overnight as working every morning. Once a genuinely fresh reading lands the
+status becomes HEALTHY on its own.
+
 The same two facts are encoded in the reliability audit's
 `analysis/reliability-audit/audit_config.py`. They are duplicated rather than
 shared because StationWatch depends on nothing outside the standard library; if
 the schedule changes, both must be updated.
 
-**Limitation:** the shutdown hours come from the project README and from the
-audit's empirically-pinned changeover date, not from any machine-readable
-configuration provided by the school.
+**Limitation — the schedule is a configured assumption, not a measurement.**
+The hours come from the project README and from the reliability audit's
+empirically-pinned changeover date, not from any machine-readable configuration
+provided by the school. StationWatch does **not** verify them against recent
+telemetry the way the audit's `verify_baseline_regimes()` checks its own 288/204
+baseline. If the powered window is ever narrowed, StationWatch will report
+OFFLINE during the new dark period until `OPERATING_WINDOWS` is updated by hand.
+
+The opposite error is covered: telemetry that genuinely arrives during a
+supposedly inactive window is reported on its own merits rather than suppressed,
+so a window that is too *wide* corrects itself on screen. Automatic schedule
+inference is deliberately not implemented.
 
 ### SCHEDULED INACTIVE is not a clean bill of health
 
@@ -218,15 +245,16 @@ python -m unittest -v
 ```
 
 The tests use controlled inputs and never contact Google Sheets. They cover
-HEALTHY, DELAYED, OFFLINE, SCHEDULED INACTIVE and MONITOR ERROR; the window
-boundaries and the startup grace; the regime date, so the shutdown is not
+HEALTHY, AWAITING TELEMETRY, DELAYED, OFFLINE, SCHEDULED INACTIVE and MONITOR
+ERROR; the window boundaries and the startup grace; the regime date, so the shutdown is not
 excused retroactively; and both daylight-saving transitions, including the case
 where the old localisation would have produced a false OFFLINE.
 
 ## Dependencies
 
-`streamlit` only, for the dashboard. The chart uses Altair, which Streamlit
-already installs. Everything else — CSV parsing, HTTP, timezones, and reading
+`streamlit` (1.62 or newer — the dashboard uses `st.html`, `st.space`,
+`st.skeleton` and `st.container(horizontal=...)`) and `altair`, which the chart
+imports directly. Everything else — CSV parsing, HTTP, timezones, and reading
 `.env` — uses the Python standard library, so the CLI runs with no third-party
 packages installed.
 
