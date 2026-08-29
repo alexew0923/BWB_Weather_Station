@@ -42,7 +42,12 @@ PALETTE = {
 MONO_STACK = "'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace"
 
 # Which palette entry each state uses. dashboard.css keys off the same slugs.
-STATE_SLUGS = {Status.HEALTHY: "healthy", Status.DELAYED: "delayed", Status.OFFLINE: "offline"}
+STATE_SLUGS = {
+    Status.HEALTHY: "healthy",
+    Status.DELAYED: "delayed",
+    Status.OFFLINE: "offline",
+    Status.SCHEDULED_INACTIVE: "inactive",
+}
 
 
 def apply_design_tokens():
@@ -91,9 +96,31 @@ def render_hero(state_slug, label, summary, age_label, age_value, facts):
     )
 
 
+def _hero_facts(report):
+    """The (label, value) pairs shown along the hero footer."""
+    facts = [
+        ("Latest telemetry", format_timestamp(report.latest_timestamp)),
+        ("Last checked", format_timestamp(report.checked_at)),
+        ("Expected window", report.window_text),
+    ]
+    if report.status is Status.SCHEDULED_INACTIVE:
+        facts.append(("Telemetry due", report.resumes_text))
+    return facts
+
+
 def render_secondary_metrics(report):
     """Compact operational numbers: what is expected, and where we actually are."""
     thresholds = report.thresholds
+    if report.status is Status.SCHEDULED_INACTIVE:
+        # The freshness limits are not being applied right now, so showing them
+        # as live numbers would imply a judgement that is not being made.
+        st.caption(
+            ":material/bedtime: Freshness limits are not applied outside the "
+            "operating window. Telemetry is due at "
+            f"{report.resumes_text}."
+        )
+        return
+
     delay_minutes = report.age_seconds / 60 - thresholds.expected_interval_minutes
     with st.container(horizontal=True):
         st.metric(
@@ -254,10 +281,14 @@ def render_check():
             report.summary,
             "Telemetry age",
             report.age_text,
-            [
-                ("Latest telemetry", format_timestamp(report.latest_timestamp)),
-                ("Last checked", format_timestamp(report.checked_at)),
-            ],
+            _hero_facts(report),
+        )
+
+    if report.latest_is_ambiguous:
+        st.caption(
+            ":material/schedule: The newest timestamp falls in a daylight-saving "
+            "transition hour. The Sheet stores local time with no UTC offset, so its "
+            "exact instant cannot be recovered from the source alone."
         )
 
     render_secondary_metrics(report)

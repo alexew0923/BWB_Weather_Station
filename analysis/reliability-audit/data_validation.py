@@ -5,7 +5,13 @@ import os
 import numpy as np
 import pandas as pd
 
-from audit_config import MAX_PLAUSIBLE_COUNT, PLAUSIBLE_SENSOR_RANGES, SENSOR_COLUMNS, TIMESTAMP_COLUMN_CANDIDATES
+from audit_config import (
+    MAX_PLAUSIBLE_COUNT,
+    PLAUSIBLE_SENSOR_RANGES,
+    SENSOR_COLUMNS,
+    STATION_TIMEZONE,
+    TIMESTAMP_COLUMN_CANDIDATES,
+)
 
 # --------------------------------------------------------------------------
 # 1. Load and validate
@@ -35,6 +41,94 @@ def require_expected_columns(df):
             "CSV is missing required column(s): " + ", ".join(missing)
             + f"\nExpected: {', '.join(SENSOR_COLUMNS + ['Count'])}"
         )
+
+
+def _ambiguous_mask(naive):
+    """Rows whose local wall-clock time occurs twice on a DST fall-back day."""
+    # ambiguous="NaT" nulls both ambiguous and non-existent times; ambiguous=True
+    # nulls only the non-existent ones, so the difference isolates the ambiguous.
+    either = naive.dt.tz_localize(STATION_TIMEZONE, ambiguous="NaT", nonexistent="NaT")
+    nonexistent_only = naive.dt.tz_localize(STATION_TIMEZONE, ambiguous=True, nonexistent="NaT")
+    return either.isna() & nonexistent_only.notna()
+
+
+def _resolve_fall_back(naive, ambiguous):
+    """
+    Decide, per ambiguous row, whether it belongs to the first or second pass
+    through the repeated hour.
+
+    Resolved from FILE ORDER rather than guessed. Rows reach the sheet in
+    arrival order, so within one repeated hour the first pass (Atlantic Daylight
+    Time) is written before the second (Atlantic Standard Time). The switch is
+    the point where the wall clock jumps backwards -- on the shipped dataset
+    that is 2025-11-02 01:58:38 -> 01:03:33, with Count still monotonic across
+    it, which is what confirms the clock moved and the transmitter did not.
+
+    Returns a boolean Series in pandas' convention: True = first/DST pass.
+    """
+    choice = pd.Series(True, index=naive.index)
+    if not ambiguous.any():
+        return choice
+
+    # One repeated hour per transition, so group by the local calendar date.
+    for _, positions in naive[ambiguous].groupby(naive[ambiguous].dt.date).groups.items():
+        ordered = sorted(positions)
+        second_pass = False
+        previous = None
+        for position in ordered:
+            moment = naive.loc[position]
+            if previous is not None and moment < previous:
+                second_pass = True
+            if second_pass:
+                choice.loc[position] = False
+            previous = moment
+    return choice
+
+
+def localize_timestamps(naive, log):
+    """
+    Attach America/Halifax to naive wall-clock timestamps, resolving DST.
+
+    The sheet stores Apps Script receipt time as local text with no UTC offset,
+    so the raw column is not a monotonic timeline: an Atlantic fall-back repeats
+    the 01:00 hour and a spring-forward skips the 02:00 hour. Localising makes
+    every later duration real elapsed time, which is what stops the fall-back
+    from reading as a 55-minute backward jump and the spring-forward from
+    reading as a phantom 60-minute outage.
+
+    Ambiguous rows are resolved from file order (see _resolve_fall_back); any
+    that cannot be are left on the first pass and reported, never silently
+    dropped.
+    """
+    ambiguous = _ambiguous_mask(naive)
+    nonexistent = naive.dt.tz_localize(
+        STATION_TIMEZONE, ambiguous=True, nonexistent="NaT"
+    ).isna()
+
+    choice = _resolve_fall_back(naive, ambiguous)
+    aware = naive.dt.tz_localize(
+        STATION_TIMEZONE, ambiguous=choice.to_numpy(), nonexistent="shift_forward"
+    )
+
+    log.append(f"Timezone applied       : {STATION_TIMEZONE.key} (local wall clock, no offset in source)")
+    if ambiguous.any():
+        second = int((~choice[ambiguous]).sum())
+        log.append(
+            f"    DST fall-back: {int(ambiguous.sum())} ambiguous timestamp(s) resolved from "
+            f"file order ({int(ambiguous.sum()) - second} first pass / {second} second pass)"
+        )
+        for position in naive.index[ambiguous][:4]:
+            log.append(f"        {naive.loc[position]} -> {aware.loc[position]}")
+        if int(ambiguous.sum()) > 4:
+            log.append(f"        ... and {int(ambiguous.sum()) - 4} more")
+    if nonexistent.any():
+        log.append(
+            f"    DST spring-forward: {int(nonexistent.sum())} non-existent timestamp(s) "
+            f"shifted forward out of the skipped hour"
+        )
+    if not ambiguous.any() and not nonexistent.any():
+        log.append("    no DST transition timestamps in this dataset")
+    return aware
 
 
 def flag_corrupted_frame(df, log):
@@ -167,6 +261,10 @@ def detect_backward_timestamp_jumps(df, log):
     the anomaly disappears from the report. Count staying monotonic across the
     jump shows the transmitter was fine and only the Apps Script receipt clock
     moved, so the affected rows are kept as-is.
+
+    Runs on LOCALISED timestamps, so the annual DST fall-back -- which is a
+    backward jump on the raw wall clock but not in real time -- is already
+    resolved and does not appear here. Anything left is a genuine clock anomaly.
     """
     went_backwards = df["timestamp"].diff() < pd.Timedelta(0)
     count = int(went_backwards.sum())
@@ -220,6 +318,9 @@ def load_and_validate_data(path):
 
     log.append("")
     log.append("-- integrity checks (file order preserved) --")
+    # Localise BEFORE the backward-jump check: on a naive series the annual
+    # fall-back looks like a device fault, and it is not one.
+    raw["timestamp"] = localize_timestamps(raw["timestamp"], log)
     backward_jumps = detect_backward_timestamp_jumps(raw, log)
     raw, corrupted_frames = flag_corrupted_frame(raw, log)
     df = deduplicate_exact_repeats(raw, log)

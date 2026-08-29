@@ -1,6 +1,7 @@
 """Constants and fixed assumptions for the reliability audit."""
 
-from datetime import date
+from datetime import date, datetime, time, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 # --------------------------------------------------------------------------
 # Constants
@@ -9,6 +10,18 @@ from datetime import date
 # The transmitter deep-sleeps for 300 s between transmissions.
 NOMINAL_CYCLE_MINUTES = 5.0
 
+# The sheet stores Apps Script receipt time as local wall-clock text with no UTC
+# offset, so every timestamp must be localised before any duration arithmetic.
+# Halifax is inferred from the deployment (Charles P. Allen High School, Nova
+# Scotia) AND confirmed by the data: 2025-11-02 01:58:38 is followed by
+# 01:03:33, which is the Atlantic fall-back repeating the 01:00 hour.
+STATION_TIMEZONE = ZoneInfo("America/Halifax")
+
+
+# --------------------------------------------------------------------------
+# Operating schedule -- the single authoritative source of "expected"
+# --------------------------------------------------------------------------
+#
 # THE BASELINE IS NOT CONSTANT. It changed partway through the deployment, so a
 # single denominator would be wrong for most of the dataset.
 #
@@ -31,7 +44,58 @@ NOMINAL_CYCLE_MINUTES = 5.0
 #
 # verify_baseline_regimes() re-checks all of this on every run, so if the
 # schedule changes again the audit says so instead of silently misreporting.
+#
+# EVERY expected/missed/completeness figure in the audit is derived from the
+# table below through scheduled_transmissions_between(). There is deliberately
+# no second, independent way to compute an expected count: a regime-blind
+# "gap minutes / 5" formula in outage_analysis.py used to disagree with the
+# per-day denominator by 3,811 transmissions (5.5%) on the shipped dataset.
+
 BASELINE_CHANGEOVER_DATE = date(2026, 4, 21)
+
+
+class OperatingRegime:
+    """One stretch of deployment with a fixed daily powered window.
+
+    ``active_start_hour``/``active_end_hour`` are local wall-clock hours; the
+    end hour is exclusive. A regime covering the whole day uses 0..24.
+    """
+
+    def __init__(self, starts_on, active_start_hour, active_end_hour, label):
+        self.starts_on = starts_on
+        self.active_start_hour = active_start_hour
+        self.active_end_hour = active_end_hour
+        self.label = label
+
+    def window_for(self, day):
+        """The powered window on ``day`` as an aware (open, close) pair."""
+        open_at = datetime.combine(day, time(self.active_start_hour))
+        # Hour 24 is midnight on the following day; time() cannot express it.
+        if self.active_end_hour >= 24:
+            close_at = datetime.combine(day + timedelta(days=1), time(0))
+        else:
+            close_at = datetime.combine(day, time(self.active_end_hour))
+        # 00:00, 06:00 and 23:00 are never ambiguous or non-existent under
+        # Atlantic DST (the transition is at 02:00), so a plain attach is safe.
+        #
+        # Returned in UTC. Subtracting two aware datetimes that share one tzinfo
+        # object makes Python ignore the zone and subtract the wall clocks, which
+        # would silently report the 25-hour fall-back day as 24 hours.
+        return (
+            open_at.replace(tzinfo=STATION_TIMEZONE).astimezone(timezone.utc),
+            close_at.replace(tzinfo=STATION_TIMEZONE).astimezone(timezone.utc),
+        )
+
+
+OPERATING_REGIMES = (
+    OperatingRegime(date.min, 0, 24, "24 h continuous"),
+    OperatingRegime(BASELINE_CHANGEOVER_DATE, 6, 23, "06:00-23:00 building power"),
+)
+
+# Nominal per-day counts, kept for the regime self-check and for reporting.
+# The ACTUAL per-day figure comes from expected_transmissions_for(), which is
+# DST-aware and therefore returns 300 on the fall-back day and 276 on the
+# spring-forward day under the 24 h regime.
 EXPECTED_TRANSMISSIONS_24H = 288       # before the changeover
 EXPECTED_TRANSMISSIONS_POWERED = 204   # after: 17 powered hours * 12/hour
 
@@ -40,16 +104,67 @@ ACTIVE_HOUR_END = 22    # last  hour of the powered window (inclusive)
 NIGHT_HOURS = [23, 0, 1, 2, 3, 4, 5]   # the hours lost after the changeover
 
 
+def regime_for(day):
+    """The operating regime in force on a given calendar date."""
+    chosen = OPERATING_REGIMES[0]
+    for regime in OPERATING_REGIMES:
+        if day >= regime.starts_on:
+            chosen = regime
+    return chosen
+
+
+def active_window_for(day):
+    """The powered (open, close) window on ``day``, as aware datetimes."""
+    return regime_for(day).window_for(day)
+
+
+def active_minutes_between(start, end):
+    """
+    Real elapsed minutes inside the powered window between two aware instants.
+
+    Real elapsed, not wall-clock: the windows are built in local time so the
+    building's 23:00 means 23:00 all year, but the subtraction happens in
+    absolute time. That is what makes a 25-hour fall-back day come out as 1500
+    schedulable minutes instead of 1440.
+    """
+    if end <= start:
+        return 0.0
+
+    total = 0.0
+    day = start.astimezone(STATION_TIMEZONE).date()
+    last_day = end.astimezone(STATION_TIMEZONE).date()
+    while day <= last_day:
+        open_at, close_at = active_window_for(day)
+        overlap_start = max(open_at, start)
+        overlap_end = min(close_at, end)
+        if overlap_end > overlap_start:
+            total += (overlap_end - overlap_start).total_seconds() / 60.0
+        day += timedelta(days=1)
+    return total
+
+
+def scheduled_transmissions_between(start, end):
+    """
+    Scheduled transmission slots in the half-open interval (start, end].
+
+    This is THE expected-count primitive. Daily baselines, missed-transmission
+    counts and the reconciliation all route through it, so they cannot drift
+    apart the way the per-day and per-gap denominators previously did.
+    """
+    return int(round(active_minutes_between(start, end) / NOMINAL_CYCLE_MINUTES))
+
+
 def expected_transmissions_for(day):
     """
     Scheduled transmissions for one calendar day.
 
     Kept as a function rather than a constant because the station's duty cycle
-    changed mid-deployment; see BASELINE_CHANGEOVER_DATE above.
+    changed mid-deployment; see OPERATING_REGIMES above. DST-aware, so the two
+    transition days differ from the nominal 288.
     """
-    if day < BASELINE_CHANGEOVER_DATE:
-        return EXPECTED_TRANSMISSIONS_24H
-    return EXPECTED_TRANSMISSIONS_POWERED
+    open_at, close_at = active_window_for(day)
+    return scheduled_transmissions_between(open_at, close_at)
+
 
 # The timestamp column is named "Date" in the HistoricalData export even though
 # it holds a full datetime (it is the Apps Script receipt time, not the sensor

@@ -11,7 +11,7 @@ from audit_config import (
     NIGHTLY_SHUTDOWN_END_HOUR,
     NIGHTLY_SHUTDOWN_MAX_MINUTES,
     NIGHTLY_SHUTDOWN_START_HOUR,
-    NOMINAL_CYCLE_MINUTES,
+    scheduled_transmissions_between,
 )
 
 def compute_gaps(df):
@@ -45,6 +45,15 @@ def classify_gap(minutes, starts_at, ends_at):
     if minutes <= GAP_MAJOR_MINUTES:
         return "major"
     return "critical"
+
+
+def missed_transmissions(start, end):
+    """
+    Scheduled transmissions lost to the gap between two received rows.
+
+    The row at ``end`` occupies one scheduled slot, so it is not a loss.
+    """
+    return max(0, scheduled_transmissions_between(start, end) - 1)
 
 
 def detect_outages(df, gaps):
@@ -88,12 +97,19 @@ def detect_outages(df, gaps):
                 "gap_minutes": round(minutes, 2),
                 "gap_hours": round(minutes / 60.0, 3),
                 "severity": severity,
-                # How many scheduled transmissions the hole represents. Only
-                # meaningful for real outages, so left blank for the scheduled
-                # overnight window.
+                # How many scheduled transmissions the hole represents, counted
+                # against the operating schedule in force -- NOT gap minutes / 5.
+                # A gap that spans the nightly power-down contains far fewer
+                # schedulable slots than its wall-clock length suggests, and the
+                # old regime-blind formula overstated the 2026-04-22 outage by
+                # 42% and the dataset total by 3,811 transmissions.
+                #
+                # The scheduled overnight window needs no special case any more:
+                # it contains no powered minutes, so the arithmetic returns 0.
                 "missed_transmissions": (
-                    "" if severity == "scheduled overnight shutdown"
-                    else max(0, int(round(minutes / NOMINAL_CYCLE_MINUTES)) - 1)
+                    max(0, int(df["slot"].iloc[i] - df["slot"].iloc[i - 1]) - 1)
+                    if "slot" in df.columns
+                    else missed_transmissions(start, end)
                 ),
                 "count_before": df["Count"].iloc[i - 1],
                 "count_after": df["Count"].iloc[i],

@@ -28,6 +28,8 @@ from outage_analysis import (
 )
 from reliability_metrics import (
     add_daily_gap_stats,
+    add_slot_index,
+    reconcile_transmissions,
     build_daily_reliability,
     classify_day,
     compute_daily_row_completeness,
@@ -37,6 +39,7 @@ from reliability_metrics import (
 )
 from reporting import (
     NULL_RATE_SWING_THRESHOLD,
+    print_reconciliation,
     _commissioning_notes,
     _null_rate_swing_notes,
     build_anomaly_notes,
@@ -69,6 +72,9 @@ def main():
     os.makedirs(output_dir, exist_ok=True)
 
     df, validation = load_and_validate_data(csv_path)
+    # Position every row on the powered timeline once; the outage counts and the
+    # reconciliation are both differences of these slot indices.
+    df = add_slot_index(df)
 
     gaps = compute_gaps(df)
     report_gap_distribution(gaps)
@@ -84,6 +90,9 @@ def main():
     daily_reliability = build_daily_reliability(daily, sensor_daily)
     summarise_daily_reliability(daily_reliability)
 
+    reconciliation = reconcile_transmissions(df, daily)
+    print_reconciliation(reconciliation)
+
     written = [
         _write_csv(outages, output_dir, "outage_intervals.csv"),
         _write_csv(sensor_daily, output_dir, "sensor_completeness.csv"),
@@ -94,7 +103,8 @@ def main():
         plot_gap_distribution(gaps, output_dir),
     ]
 
-    print_summary(df, validation, daily, daily_reliability, sensor_summary, outages)
+    print_summary(df, validation, daily, daily_reliability, sensor_summary,
+                  outages, reconciliation)
 
     print("=" * 78)
     print("OUTPUTS")

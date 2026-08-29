@@ -123,12 +123,25 @@ is split by responsibility without changing the command or generated outputs:
 
 | Module | Responsibility |
 |---|---|
-| `audit_config.py` | fixed assumptions, thresholds and shared constants |
+| `audit_config.py` | operating schedule, fixed assumptions, thresholds and shared constants |
 | `data_validation.py` | CSV loading, schema checks and integrity handling |
 | `outage_analysis.py` | inter-arrival gaps and outage classification |
 | `reliability_metrics.py` | daily row, sensor and reliability calculations |
 | `reporting.py` | console summaries and anomaly notes |
 | `visualization.py` | PNG figure generation |
+| `test_reliability_audit.py` | regression tests for the expected-count and timestamp logic |
+
+### Running the tests
+
+```bash
+.venv/bin/python -m unittest test_reliability_audit -v
+```
+
+The tests cover the calculations whose failure would change a reliability
+conclusion: regime-aware expected counts, the reconciliation identity, DST
+handling, gap severity and day classification. Presentation code and figure
+generation are deliberately untested -- a wrong plot is visible, a wrong
+denominator is not.
 
 ---
 
@@ -144,6 +157,17 @@ Dataset analyzed:
 | Overall telemetry completeness | 35.6% |
 | Days with no telemetry received | 120 |
 | Longest telemetry blackout | 19 days |
+| Missed transmissions | 45,989 |
+| Duplicate/repeat rows occupying no new slot | 970 |
+
+Every scheduled transmission is accounted for exactly:
+
+```text
+received 24,833  +  missed 45,989  -  surplus 970  =  expected 69,852
+```
+
+The audit prints this reconciliation on every run and warns if the residual is
+not zero. See "Expected transmissions are counted once" below for why.
 
 Major findings:
 
@@ -188,7 +212,11 @@ Two operating regimes were identified:
 | Period | Operating schedule | Expected events/day |
 |---|---|---:|
 | 2025-11-01 → 2026-04-20 | Continuous operation | 288 |
-| 2026-04-21 → 2026-07-30 | Night shutdown period | 204 |
+| 2026-04-21 → 2026-07-30 | Night shutdown, 06:00–23:00 | 204 |
+
+Two days are neither: daylight-saving transitions make 2025-11-02 a 25-hour day
+(300 schedulable events) and 2026-03-08 a 23-hour day (276). They cancel, so the
+272-day total is unchanged at 69,852.
 
 The transition was identified from observed telemetry behavior rather than assumed.
 
@@ -199,6 +227,28 @@ Evidence:
 - Daily event counts matched the two expected operating regimes.
 
 The audit verifies these regimes during execution so future schedule changes produce warnings instead of silently invalidating calculations.
+
+---
+
+# Expected Transmissions Are Counted Once
+
+The operating schedule lives in one place, `OPERATING_REGIMES` in
+`audit_config.py`, and every expected, missed and completeness figure is derived
+from it through `scheduled_transmissions_between()`. Nothing else in the audit
+computes an expected count.
+
+This matters because the audit previously had two. The daily denominator was
+regime-aware, but the missed-transmission count divided raw gap minutes by five,
+as if the station were schedulable around the clock. After the nightly shutdown
+began, a gap spanning the powered-down hours was charged for transmissions that
+were never schedulable. The two figures disagreed by 3,811 transmissions (5.5%)
+across the dataset, and by 29% on the single 2026-04-22 → 2026-05-08 outage
+(4,645 claimed against 3,301 actually schedulable).
+
+Rows are positioned on a *powered timeline*: each row carries the index of the
+scheduled slot it occupies, skipping every minute the station had no power.
+Losses are differences between those indices, so the per-interval terms
+telescope and the reconciliation is exact rather than approximate.
 
 ---
 
@@ -453,6 +503,65 @@ Therefore:
 
 are included in observed timing behavior.
 
+### Daylight saving time
+
+The sheet stores Apps Script receipt time as local wall-clock text with no UTC
+offset, so the raw column is not a monotonic timeline. The dataset contains a
+real Atlantic fall-back: `2025-11-02 01:58:38` is followed by `01:03:33`, with
+`Count` still incrementing across it.
+
+Timestamps are therefore localized to `America/Halifax` before any duration is
+computed. Ambiguous fall-back timestamps are resolved from **file order** rather
+than guessed: rows reach the sheet in arrival order, so within the repeated hour
+everything before the backward step belongs to the first pass and everything
+after to the second. Non-existent spring-forward timestamps are shifted forward
+out of the skipped hour and reported.
+
+Left unhandled, this produced:
+
+- one backward "timestamp jump" reported as a receipt-clock anomaly (now 0);
+- twelve spurious sub-minute gaps on 2025-11-02, created purely by sorting the
+  repeated hour into itself (sub-nominal repeats: 758 → 747);
+- a 25-hour day measured against a 24-hour denominator.
+
+**Limitation:** for a single isolated row inside a repeated hour there is no
+information in the source that can resolve it. The audit can only do so because
+it has file order. A future export that loses row order would lose this.
+
+---
+
+## Ingestion-Behavior Changes (not modelled)
+
+The audit models the *sampling* schedule. It does not model changes to the
+*ingestion* code, which also alter what a cell means. `git log` on
+`scripts/apps_script/doGet.js` shows two:
+
+| Date | Change | Effect on the data |
+|---|---|---|
+| 2025-12-16 (`93a2aa5`) | zero-blanking added for columns 2–6; the `count != lastValue` de-duplication guard removed | a literal `0` from those sensors becomes an empty cell; repeat transmissions are no longer suppressed at ingest |
+| 2026-04-05 (`7e8687d`) | the `i > 1` exemption removed | a genuine `0.00 °C` reading also becomes an empty cell |
+
+Consequences that are visible in the data but **deliberately not corrected**:
+
+- "Blank" does not mean the same thing across the deployment. Before 2025-12-16
+  it meant `NaN` only; afterwards it also means "read exactly zero"; from
+  2026-04-05 that includes Temperature, which is a core sensor. Soil-moisture
+  literal zeros stop entirely after December, and the last Temperature zero is
+  2026-04-08.
+- All 551 December sub-minute repeat rows fall on or after 2025-12-16, and none
+  before it. The two "Over-baseline (fast-cycling)" days are 2025-12-17 and
+  2025-12-18, immediately after the de-duplication guard was removed. The audit
+  still classifies them on their row counts, but that classification cannot
+  separate "the node started repeat-transmitting" from "ingest stopped
+  suppressing repeats it had always received".
+
+These are not folded into the calculations because doing so would require
+knowing what was actually deployed and when. `GOOGLE_SCRIPT_ID` in the firmware
+is a placeholder and there is no `clasp` manifest or deployment record in the
+repository, so the committed Apps Script cannot be shown to be the code that
+produced any given row. Correcting for an unverified deployment date would
+replace a known uncertainty with an invented one.
+
 ---
 
 ## Failure Attribution Limitations
@@ -476,6 +585,9 @@ Potential future improvements:
 - live reliability monitoring,
 - maintenance alerts,
 - device-side sequence numbers,
+- an archive-stage audit (`archiveOldSensorData` sits between the sheet and this
+  dataset and is not currently observable; a day lost there is indistinguishable
+  from a day the station never transmitted),
 - per-hop failure logging,
 - battery-condition analysis,
 - improved sensor diagnostics,

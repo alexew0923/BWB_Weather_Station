@@ -29,10 +29,18 @@ def render_report(report):
         f"Last telemetry:  {format_timestamp(report.latest_timestamp)}",
         f"Age:             {report.age_text}",
         f"Checked:         {format_timestamp(report.checked_at)}",
-        "",
-        report.summary,
+        f"Expected window: {report.window_text}",
     ]
-    if report.status is not Status.HEALTHY:
+    if report.status is Status.SCHEDULED_INACTIVE:
+        lines.append(f"Telemetry due:   {report.resumes_text}")
+    lines += ["", report.summary]
+
+    if report.latest_is_ambiguous:
+        lines.append(
+            "Note: the newest timestamp falls in a daylight-saving transition "
+            "hour, so its exact instant cannot be read from the source alone."
+        )
+    if report.status in (Status.DELAYED, Status.OFFLINE):
         lines.append(
             "This reports the Google Sheets observation point only; it does not "
             "identify which upstream component failed."

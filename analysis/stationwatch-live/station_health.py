@@ -13,7 +13,7 @@ import csv
 import io
 import os
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime, time, timedelta, timezone as _timezone
 from enum import Enum
 from pathlib import Path
 from urllib.error import HTTPError, URLError
@@ -28,6 +28,7 @@ SHEET_URL_VARIABLE = "STATIONWATCH_SHEET_URL"
 ENV_FILE = Path(__file__).with_name(".env")
 
 HALIFAX = ZoneInfo("America/Halifax")
+UTC = _timezone.utc
 TIMESTAMP_COLUMN = "Timestamp"
 TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S"
 
@@ -92,12 +93,167 @@ def sheet_url():
     return url
 
 
+# --------------------------------------------------------------------------
+# Operating schedule
+# --------------------------------------------------------------------------
+#
+# The site loses building power overnight, so silence between 23:00 and 06:00 is
+# expected behaviour and not a fault. Without this, StationWatch reports OFFLINE
+# for seven hours every night -- roughly 29% of all wall-clock time -- and an
+# alert that is wrong a third of the day is an alert nobody reads.
+#
+# The window and its start date are the same facts the reliability audit encodes
+# in analysis/reliability-audit/audit_config.py (OPERATING_REGIMES). They are
+# duplicated rather than shared because StationWatch deliberately depends on
+# nothing outside the standard library. If the schedule changes, both must move.
+#
+# LIMITATION: the shutdown is documented in the firmware README and in the
+# audit's empirically-pinned changeover date, not in any machine-readable
+# configuration from the school. Confirm before trusting the exact hours.
+
+CONTINUOUS = "continuous"
+
+
+@dataclass(frozen=True)
+class OperatingWindow:
+    """A daily powered window, in local wall-clock hours."""
+
+    starts_on: date
+    open_hour: int
+    close_hour: int          # exclusive; 24 means the window never closes
+    label: str
+
+    @property
+    def is_continuous(self):
+        return self.open_hour == 0 and self.close_hour >= 24
+
+
+# Ordered oldest first. Each entry applies from its start date until the next.
+OPERATING_WINDOWS = (
+    OperatingWindow(date.min, 0, 24, CONTINUOUS),
+    OperatingWindow(date(2026, 4, 21), 6, 23, "06:00-23:00"),
+)
+
+
+@dataclass(frozen=True)
+class OperatingSchedule:
+    """When telemetry is expected at all."""
+
+    windows: tuple = OPERATING_WINDOWS
+    timezone: object = None
+
+    def _zone(self):
+        return self.timezone or HALIFAX
+
+    def window_for(self, moment):
+        """The OperatingWindow in force on the local date of ``moment``."""
+        day = moment.astimezone(self._zone()).date()
+        chosen = self.windows[0]
+        for window in self.windows:
+            if day >= window.starts_on:
+                chosen = window
+        return chosen
+
+    def _bounds(self, day, window):
+        """The powered (open, close) pair on ``day`` as aware datetimes.
+
+        00:00, 06:00 and 23:00 never fall in a DST gap or repeat under Atlantic
+        time (the transition is at 02:00), so attaching the zone is safe here.
+        """
+        zone = self._zone()
+        open_at = datetime.combine(day, time(window.open_hour), tzinfo=zone)
+        if window.close_hour >= 24:
+            close_at = datetime.combine(day + timedelta(days=1), time(0), tzinfo=zone)
+        else:
+            close_at = datetime.combine(day, time(window.close_hour), tzinfo=zone)
+        return open_at, close_at
+
+    def is_inactive(self, moment):
+        """True when no telemetry is expected right now."""
+        window = self.window_for(moment)
+        if window.is_continuous:
+            return False
+        open_at, close_at = self._bounds(moment.astimezone(self._zone()).date(), window)
+        return not (open_at <= moment < close_at)
+
+    def opened_at(self, moment):
+        """When the current powered window opened, or None under a continuous regime."""
+        window = self.window_for(moment)
+        if window.is_continuous:
+            return None
+        open_at, _ = self._bounds(moment.astimezone(self._zone()).date(), window)
+        return open_at
+
+    def resumes_at(self, moment):
+        """The next time telemetry is expected, or None if it already is."""
+        if not self.is_inactive(moment):
+            return None
+        zone = self._zone()
+        day = moment.astimezone(zone).date()
+        for offset in (0, 1):
+            candidate_day = day + timedelta(days=offset)
+            window = self.window_for(
+                datetime.combine(candidate_day, time(12), tzinfo=zone)
+            )
+            if window.is_continuous:
+                continue
+            open_at, _ = self._bounds(candidate_day, window)
+            if open_at > moment:
+                return open_at
+        return None
+
+    def describe(self, moment):
+        """The expected operating window on the local date of ``moment``."""
+        window = self.window_for(moment)
+        if window.is_continuous:
+            return "continuous (no scheduled shutdown)"
+        return f"{window.label} {self._zone().key}"
+
+
+def localize_wall_clock(naive, timezone, reference=None):
+    """Attach a timezone to a naive local timestamp, resolving DST ambiguity.
+
+    The Sheet stores local wall-clock text with no UTC offset, so on the annual
+    Atlantic fall-back the same written time occurs twice and on the
+    spring-forward it never occurs at all. ``replace(tzinfo=...)`` alone silently
+    picks the first interpretation, which makes a reading look up to an hour
+    older than it is -- a false OFFLINE once a year, and a false HEALTHY the
+    other way in spring.
+
+    When ``reference`` (normally "now") is supplied the ambiguity is resolved
+    exactly: pick the latest interpretation that is not in the future. Without a
+    reference the earlier one is kept, which errs towards reporting telemetry as
+    stale rather than fresh.
+
+    Returns ``(utc_datetime, was_ambiguous)``. The result is UTC on purpose:
+    subtracting two aware datetimes that share one tzinfo object makes Python
+    ignore the zone and subtract the wall clocks, so keeping local-aware values
+    around would reintroduce the very DST error this function exists to remove.
+    Convert back with format_timestamp for display.
+    """
+    first = naive.replace(tzinfo=timezone, fold=0).astimezone(UTC)
+    second = naive.replace(tzinfo=timezone, fold=1).astimezone(UTC)
+    if first == second:
+        return first, False
+    if reference is None:
+        # Without a clock to compare against, keep the earlier instant: it makes
+        # telemetry look older, which is the safer direction to be wrong in.
+        return first, True
+    plausible = [moment for moment in (first, second) if moment <= reference]
+    if not plausible:
+        # Both readings are in the future; hand back the nearer one and let the
+        # caller decide that the source is unusable.
+        return min(first, second), True
+    return max(plausible), True
+
+
 class Status(Enum):
     """A telemetry-delivery classification, plus how to describe it."""
 
     HEALTHY = "HEALTHY"
     DELAYED = "DELAYED"
     OFFLINE = "OFFLINE"
+    SCHEDULED_INACTIVE = "SCHEDULED INACTIVE"
 
     def __str__(self):
         return self.value
@@ -108,6 +264,13 @@ class Status(Enum):
             return "Fresh telemetry is reaching Google Sheets."
         if self is Status.DELAYED:
             return "Telemetry is arriving later than expected."
+        if self is Status.SCHEDULED_INACTIVE:
+            # Says nothing about the station's condition on purpose: site power
+            # is off, so a healthy station and a failed one look identical.
+            return (
+                "Telemetry is not expected right now: the site is outside its "
+                "scheduled operating window. Station condition is unknown."
+            )
         return f"Fresh telemetry has not reached Google Sheets for {age_text}."
 
 
@@ -122,6 +285,9 @@ class Thresholds:
     healthy_max_minutes: float = 10
     offline_min_minutes: float = 30
     expected_interval_minutes: float = 5
+    # Grace after site power returns: the station has to boot, associate and
+    # complete a sampling cycle before its silence means anything.
+    startup_grace_minutes: float = 15
 
     def classify(self, age_minutes):
         """Return the Status for a telemetry age given in minutes."""
@@ -142,6 +308,15 @@ class HealthReport:
     age_seconds: float
     thresholds: Thresholds
     recent_timestamps: tuple = field(default=())
+    # The window telemetry is expected in, e.g. "06:00-23:00 America/Halifax".
+    window_text: str = "continuous (no scheduled shutdown)"
+    # When telemetry is next expected; set only while SCHEDULED_INACTIVE.
+    resumes_at: datetime = None
+    # Age the status was classified on. Differs from age_seconds just after the
+    # powered window opens, where the startup grace applies.
+    classification_age_seconds: float = 0.0
+    # True when the newest timestamp fell in a repeated/skipped DST hour.
+    latest_is_ambiguous: bool = False
 
     @property
     def age_text(self):
@@ -152,6 +327,11 @@ class HealthReport:
     def summary(self):
         """One sentence describing telemetry delivery."""
         return self.status.describe(self.age_text)
+
+    @property
+    def resumes_text(self):
+        """When telemetry is next expected, or an em dash if it already is."""
+        return format_timestamp(self.resumes_at) if self.resumes_at else "\u2014"
 
     def recent_gaps(self, limit=30):
         """Return the most recent ``(arrival, gap_minutes)`` inter-arrival pairs.
@@ -179,15 +359,22 @@ class TelemetrySource:
         self._url = url
         self.timezone = timezone
         self.timeout = timeout
+        # Timestamps that landed in a repeated or skipped DST hour, recorded by
+        # parse_timestamps so the caller can say so rather than imply certainty.
+        self.ambiguous = set()
 
     @property
     def url(self):
         """The configured telemetry URL, read from the environment on demand."""
         return self._url or sheet_url()
 
-    def read_timestamps(self):
-        """Return every valid telemetry timestamp, oldest first."""
-        return self.parse_timestamps(self.download())
+    def read_timestamps(self, reference=None):
+        """Return every valid telemetry timestamp, oldest first.
+
+        ``reference`` is the current time, used to resolve DST-ambiguous
+        wall-clock timestamps; see localize_wall_clock.
+        """
+        return self.parse_timestamps(self.download(), reference=reference)
 
     def download(self):
         """Return the CSV text, or raise MonitorError if it cannot be fetched."""
@@ -198,8 +385,13 @@ class TelemetrySource:
         except (HTTPError, URLError, TimeoutError, OSError, UnicodeError) as error:
             raise MonitorError(f"could not retrieve the telemetry source: {error}") from error
 
-    def parse_timestamps(self, csv_text):
-        """Return sorted timestamps from CSV text, skipping unparseable rows."""
+    def parse_timestamps(self, csv_text, reference=None):
+        """Return sorted timestamps from CSV text, skipping unparseable rows.
+
+        Timestamps are local wall-clock text with no UTC offset, so each one is
+        localised through localize_wall_clock rather than having a zone attached
+        blindly.
+        """
         try:
             rows = csv.DictReader(io.StringIO(csv_text))
             if not rows.fieldnames or TIMESTAMP_COLUMN not in rows.fieldnames:
@@ -208,13 +400,19 @@ class TelemetrySource:
                     summary=UNREADABLE_SUMMARY,
                 )
             timestamps = []
+            self.ambiguous = set()
             for row in rows:
                 value = (row.get(TIMESTAMP_COLUMN) or "").strip()
                 try:
-                    moment = datetime.strptime(value, TIMESTAMP_FORMAT)
+                    naive = datetime.strptime(value, TIMESTAMP_FORMAT)
                 except ValueError:
                     continue
-                timestamps.append(moment.replace(tzinfo=self.timezone))
+                moment, was_ambiguous = localize_wall_clock(
+                    naive, self.timezone, reference
+                )
+                if was_ambiguous:
+                    self.ambiguous.add(moment)
+                timestamps.append(moment)
         except csv.Error as error:
             raise MonitorError(
                 f"could not parse the telemetry source: {error}", summary=UNREADABLE_SUMMARY
@@ -234,19 +432,25 @@ class TelemetrySource:
 class StationMonitor:
     """Turns telemetry timestamps into a HealthReport."""
 
-    def __init__(self, source=None, thresholds=None, timezone=HALIFAX):
+    def __init__(self, source=None, thresholds=None, timezone=HALIFAX, schedule=None):
         self.source = source or TelemetrySource(timezone=timezone)
         self.thresholds = thresholds or Thresholds()
         self.timezone = timezone
+        self.schedule = schedule or OperatingSchedule(timezone=timezone)
 
     def now(self):
-        """The current Halifax-local time. Overridable in tests."""
-        return datetime.now(self.timezone)
+        """The current instant, in UTC. Overridable in tests.
+
+        UTC rather than Halifax so that every subtraction against a telemetry
+        timestamp is a real elapsed duration; see localize_wall_clock.
+        """
+        return datetime.now(UTC)
 
     def check(self, recent_limit=50):
         """Perform one check and return a HealthReport, or raise MonitorError."""
-        timestamps = self.source.read_timestamps()
+        # Read the clock first: it resolves DST-ambiguous source timestamps.
         checked_at = self.now()
+        timestamps = self.source.read_timestamps(reference=checked_at)
         latest = timestamps[-1]
         age_seconds = (checked_at - latest).total_seconds()
         if age_seconds < -60:
@@ -255,14 +459,54 @@ class StationMonitor:
             )
 
         age_seconds = max(0.0, age_seconds)
+        status, classification_age = self.classify(latest, checked_at)
+
         return HealthReport(
-            status=self.thresholds.classify(age_seconds / 60),
+            status=status,
             latest_timestamp=latest,
             checked_at=checked_at,
             age_seconds=age_seconds,
             thresholds=self.thresholds,
             recent_timestamps=tuple(timestamps[-recent_limit:]),
+            window_text=self.schedule.describe(checked_at),
+            resumes_at=self.schedule.resumes_at(checked_at),
+            classification_age_seconds=classification_age,
+            latest_is_ambiguous=latest in getattr(self.source, "ambiguous", ()),
         )
+
+    def classify(self, latest, checked_at):
+        """Return ``(status, classification_age_seconds)`` for one observation.
+
+        Stale telemetry is only a fault while telemetry is expected. Outside the
+        powered window the status is SCHEDULED_INACTIVE, which asserts nothing
+        about the station -- with site power off, a healthy station and a failed
+        one are indistinguishable.
+
+        Just after the window reopens the newest reading is still hours old
+        through no fault of the station, so the age is measured from the end of
+        the startup grace instead. That decays naturally: the grace buys a fixed
+        amount of silence, after which the ordinary thresholds take over.
+        """
+        if self.schedule.is_inactive(checked_at):
+            # The window is an assumption, and telemetry that is genuinely
+            # arriving is evidence against it. Reporting SCHEDULED INACTIVE over
+            # fresh data would hide a schedule change behind the very rule the
+            # change invalidates, so freshness wins here.
+            age_seconds = max(0.0, (checked_at - latest).total_seconds())
+            if age_seconds / 60 <= self.thresholds.healthy_max_minutes:
+                return Status.HEALTHY, age_seconds
+            return Status.SCHEDULED_INACTIVE, 0.0
+
+        opened_at = self.schedule.opened_at(checked_at)
+        reference = latest
+        if opened_at is not None:
+            grace_until = opened_at + timedelta(
+                minutes=self.thresholds.startup_grace_minutes
+            )
+            reference = max(latest, grace_until)
+
+        classification_age = max(0.0, (checked_at - reference).total_seconds())
+        return self.thresholds.classify(classification_age / 60), classification_age
 
 
 def check_station_health(**kwargs):
@@ -285,15 +529,22 @@ def format_duration(seconds):
     return f"{seconds}s"
 
 
-def format_timestamp(moment):
-    """Format a Halifax-local timestamp, for example ``2026-08-29 00:12 ADT``."""
-    return moment.strftime("%Y-%m-%d %H:%M %Z")
+def format_timestamp(moment, timezone=HALIFAX):
+    """Render an instant in station-local time, e.g. ``2026-08-29 00:12 ADT``.
+
+    Instants are carried in UTC internally, so display is the one place the
+    local zone is applied.
+    """
+    return moment.astimezone(timezone).strftime("%Y-%m-%d %H:%M %Z")
 
 
 OBSERVATION_NOTE = (
     "StationWatch currently monitors the Google Sheets endpoint. An OFFLINE state "
     "means fresh telemetry is no longer reaching Sheets; it does not yet determine "
-    "which upstream component failed."
+    "which upstream component failed. SCHEDULED INACTIVE means the site is outside "
+    "its powered window, so no telemetry is due -- it is not a statement that the "
+    "station is healthy, because with site power off a working station and a failed "
+    "one look exactly the same."
 )
 
 UPSTREAM_DOMAINS = (

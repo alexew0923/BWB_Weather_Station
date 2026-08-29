@@ -132,7 +132,7 @@ def summarise_daily_reliability(daily_reliability):
 def print_baseline_check(regimes):
     """Print the regime table and flag anything that contradicts the constants."""
     print("  Baseline check (night = hours 23,00-05; rates are rows per "
-          "hour-of-day slot):")
+          "hour-of-day slot per day):")
     print(f"      {'regime':<22} {'expected':>9} {'night/h':>9} {'day/h':>8} "
           f"{'ratio':>7} {'peak day':>9}")
     for regime in regimes:
@@ -152,7 +152,35 @@ def print_baseline_check(regimes):
                   f"but night traffic is {regime['ratio']:.2f} of daytime")
 
 
-def print_summary(df, validation, daily, daily_reliability, sensor_summary, outages):
+def print_reconciliation(reconciliation):
+    """
+    Print the expected/received/missed identity.
+
+    Published so the two figures cannot silently disagree again. Before the
+    schedule was centralised, the missed count assumed a 5-minute cycle around
+    the clock while the daily denominator did not, and the two overshot the
+    expected total by 3,811 transmissions (5.5%).
+    """
+    print("=" * 78)
+    print("TRANSMISSION RECONCILIATION")
+    print("=" * 78)
+    print(f"  Expected (scheduled slots in span) : {reconciliation['expected']:>8,}")
+    print(f"  Received (rows)                    : {reconciliation['received']:>8,}")
+    print(f"  Missed   (empty scheduled slots)   : {reconciliation['missed']:>8,}")
+    print(f"  Surplus  (rows in no new slot)     : {reconciliation['surplus']:>8,}"
+          "   duplicates / sub-minute repeats")
+    print(f"  {'-' * 37} {'-' * 8}")
+    print(f"  received + missed - surplus        : "
+          f"{reconciliation['received'] + reconciliation['missed'] - reconciliation['surplus']:>8,}")
+    print(f"  Residual (must be 0)               : {reconciliation['residual']:>8,}")
+    if reconciliation["residual"] != 0:
+        print("      WARNING: the accounting does not balance; expected, missed and "
+              "received are not measuring the same scope.")
+    print()
+
+
+def print_summary(df, validation, daily, daily_reliability, sensor_summary, outages,
+                  reconciliation=None):
     """The headline summary block."""
     start = df["timestamp"].min()
     end = df["timestamp"].max()
@@ -186,11 +214,24 @@ def print_summary(df, validation, daily, daily_reliability, sensor_summary, outa
     print(f"  Total observations      : {len(df):,} rows "
           f"({validation['rows_dropped']} dropped in validation)")
     days_24h = int((daily["expected_rows"] == EXPECTED_TRANSMISSIONS_24H).sum())
-    days_powered = len(daily) - days_24h
+    days_powered = int((daily["expected_rows"] == EXPECTED_TRANSMISSIONS_POWERED).sum())
+    # Daylight-saving days are neither 288 nor 204: the 25-hour fall-back day is
+    # schedulable for 300 slots and the 23-hour spring-forward day for 276.
+    dst_days = daily.loc[
+        ~daily["expected_rows"].isin(
+            [EXPECTED_TRANSMISSIONS_24H, EXPECTED_TRANSMISSIONS_POWERED]),
+        "expected_rows",
+    ]
     print(f"  Expected transmissions  : {total_expected:,} "
           f"({EXPECTED_TRANSMISSIONS_24H}/day x {days_24h} days + "
-          f"{EXPECTED_TRANSMISSIONS_POWERED}/day x {days_powered} days)")
+          f"{EXPECTED_TRANSMISSIONS_POWERED}/day x {days_powered} days"
+          + (" + " + " + ".join(f"{int(n)} on 1 DST day" for n in sorted(dst_days))
+             if len(dst_days) else "")
+          + ")")
     print(f"  Overall row completeness: {100 * overall_completeness:.1f}%")
+    if reconciliation is not None:
+        print(f"  Missed transmissions    : {reconciliation['missed']:,} "
+              f"(expected - received + surplus; reconciles exactly)")
     print()
     print_baseline_check(regimes)
     print()
@@ -328,13 +369,14 @@ def _null_rate_swing_notes(df, skip=()):
         # "the signal itself changed" claim is measured, not assumed.
         populated = df.loc[df[column].notna(), ["timestamp", column]]
         if len(populated) > 2:
-            first_month = populated["timestamp"].dt.to_period("M").min()
-            last_month = populated["timestamp"].dt.to_period("M").max()
+            # to_period() cannot carry a timezone; drop it explicitly rather than
+            # letting pandas warn and discard it for us. These are local months.
+            months = populated["timestamp"].dt.tz_localize(None).dt.to_period("M")
+            first_month = months.min()
+            last_month = months.max()
             if first_month != last_month:
-                early = populated.loc[
-                    populated["timestamp"].dt.to_period("M") == first_month, column]
-                late = populated.loc[
-                    populated["timestamp"].dt.to_period("M") == last_month, column]
+                early = populated.loc[months == first_month, column]
+                late = populated.loc[months == last_month, column]
                 if len(early) > 1 and len(late) > 1:
                     note += (
                         f"; spread also changes (std {early.std():.0f} in "

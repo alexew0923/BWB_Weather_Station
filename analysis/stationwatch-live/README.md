@@ -12,9 +12,10 @@ Long-run reliability analysis belongs to the separate reliability-audit project.
 
 - retrieves the public Google Sheets telemetry CSV
 - identifies the latest valid reading
-- handles Halifax-local timezone-aware timestamps (`ZoneInfo("America/Halifax")`)
-- computes telemetry age
-- classifies telemetry as HEALTHY / DELAYED / OFFLINE
+- handles Halifax-local timestamps, including daylight-saving transitions
+- computes telemetry age on a UTC timeline
+- classifies telemetry as HEALTHY / DELAYED / OFFLINE / SCHEDULED INACTIVE
+- knows the site's nightly power schedule, so expected silence is not a fault
 - terminal CLI
 - Streamlit live dashboard
 - recent telemetry context (latest readings and their arrival gaps)
@@ -97,7 +98,8 @@ streamlit run app.py
 ```
 
 The dashboard leads with the current state, then telemetry age, the latest
-timestamp and last check, the configured thresholds, recent arrival intervals,
+timestamp, last check and the expected operating window, the configured
+thresholds, recent arrival intervals,
 and recent readings. Its theme lives in `.streamlit/config.toml` and its layout
 styling in `dashboard.css`; the semantic status colours are defined once in
 `PALETTE` in `app.py` and shared by the stylesheet and the chart. Those colours
@@ -119,6 +121,7 @@ Results are never cached, so any refresh shows current Google Sheets data.
 | HEALTHY | newest telemetry is 10 minutes old or less |
 | DELAYED | newest telemetry is more than 10 and less than 30 minutes old |
 | OFFLINE | newest telemetry is 30 minutes old or more |
+| SCHEDULED INACTIVE | the site is outside its powered window, so no telemetry is due |
 | MONITOR ERROR | StationWatch has no usable observation of the source, so no status applies |
 
 A missing `STATIONWATCH_SHEET_URL`, an unreachable Sheet, and an unreadable CSV
@@ -126,6 +129,63 @@ are all monitor errors, distinguished by the reason shown on screen.
 
 Thresholds live in `Thresholds` in `station_health.py`. The expected sampling
 interval (~5 min) is displayed for context and is not used in classification.
+
+### The operating schedule
+
+The site loses building power overnight, so silence between 23:00 and 06:00 is
+expected and is not a fault. Without this, StationWatch reported OFFLINE for
+seven hours every night — roughly 29% of all wall-clock time — and an alert that
+is wrong a third of the day is an alert nobody reads.
+
+The schedule lives in `OPERATING_WINDOWS` in `station_health.py`:
+
+| From | Powered window |
+| --- | --- |
+| (start of deployment) | continuous, no scheduled shutdown |
+| 2026-04-21 | 06:00–23:00 America/Halifax |
+
+It is date-aware on purpose. Overnight silence *before* 2026-04-21 was a real
+outage and is still reported as OFFLINE; SCHEDULED INACTIVE is never applied
+outside the regime where the shutdown actually exists.
+
+When the window reopens, the newest reading is still hours old through no fault
+of the station. A 15-minute startup grace (`Thresholds.startup_grace_minutes`)
+covers boot, association and the first sampling cycle; after it expires the
+ordinary 10/30-minute limits take over, so a station that fails to come back is
+still reported.
+
+The same two facts are encoded in the reliability audit's
+`analysis/reliability-audit/audit_config.py`. They are duplicated rather than
+shared because StationWatch depends on nothing outside the standard library; if
+the schedule changes, both must be updated.
+
+**Limitation:** the shutdown hours come from the project README and from the
+audit's empirically-pinned changeover date, not from any machine-readable
+configuration provided by the school.
+
+### SCHEDULED INACTIVE is not a clean bill of health
+
+It says only that no telemetry is due. With site power off, a working station
+and a failed one produce exactly the same silence, so the state deliberately
+asserts nothing about the hardware. The dashboard hides the freshness limits
+while it is active rather than showing numbers that are not being applied.
+
+### Daylight saving time
+
+The Sheet stores local wall-clock text with no UTC offset. On the annual
+Atlantic fall-back the same written time occurs twice, and on the spring-forward
+it never occurs at all. Attaching the timezone blindly picks the first
+interpretation, which can make a reading look up to an hour older than it is —
+a false OFFLINE once a year, and the reverse in spring.
+
+StationWatch resolves the ambiguity against the current clock: of the two
+possible instants, it takes the later one that is not in the future. Timestamps
+are then carried as UTC internally and converted back to Halifax only for
+display, because subtracting two aware datetimes that share one `tzinfo` object
+makes Python compare wall clocks and silently reintroduces the same error.
+
+An ambiguous newest reading is flagged on both the CLI and the dashboard rather
+than presented as certain.
 
 ### MONITOR ERROR is not OFFLINE
 
@@ -157,9 +217,11 @@ broken.
 python -m unittest -v
 ```
 
-The tests use controlled inputs and never contact Google Sheets, so they cover
-HEALTHY, DELAYED, OFFLINE, and MONITOR ERROR without touching production
-telemetry.
+The tests use controlled inputs and never contact Google Sheets. They cover
+HEALTHY, DELAYED, OFFLINE, SCHEDULED INACTIVE and MONITOR ERROR; the window
+boundaries and the startup grace; the regime date, so the shutdown is not
+excused retroactively; and both daylight-saving transitions, including the case
+where the old localisation would have produced a false OFFLINE.
 
 ## Dependencies
 
@@ -174,6 +236,8 @@ Not implemented, and deliberately out of scope for this version:
 
 - transmitter heartbeat
 - packet sequence numbers
+- distinguishing a scheduled shutdown from a site power failure that happens to
+  coincide with it
 - receiver health
 - ESP-NOW diagnostics
 - Wi-Fi and upload diagnostics

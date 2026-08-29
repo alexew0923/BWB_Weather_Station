@@ -1,5 +1,8 @@
 """Daily row, sensor-completeness, and reliability calculations."""
 
+from datetime import timedelta
+
+import numpy as np
 import pandas as pd
 
 from audit_config import (
@@ -14,9 +17,91 @@ from audit_config import (
     NIGHT_HOURS,
     SENSOR_COLUMNS,
     BASELINE_CHANGEOVER_DATE,
+    NOMINAL_CYCLE_MINUTES,
+    STATION_TIMEZONE,
+    active_window_for,
     expected_transmissions_for,
 )
 from outage_analysis import real_outages
+
+
+def add_slot_index(df):
+    """
+    Number every row by its position on the POWERED timeline.
+
+    The slot index counts scheduled 5-minute transmission opportunities since
+    the start of the dataset, skipping every minute the station was not powered.
+    Two rows that straddle the nightly shutdown differ by only the handful of
+    slots that were actually schedulable between them.
+
+    Numbering is 1-based: a row arriving exactly as the first powered window
+    opens occupies slot 1, so the number of slots up to and including any row is
+    its own index. That is what makes the head/tail terms in
+    reconcile_transmissions come out at zero for a complete day.
+
+    Everything expected/missed downstream is a difference of two slot indices,
+    which is what makes the reconciliation exact: the per-interval terms
+    telescope instead of each carrying its own rounding error.
+    """
+    first_day = df["timestamp"].iloc[0].date()
+    last_day = df["timestamp"].iloc[-1].date()
+
+    # Active minutes elapsed at the moment each day's powered window opens.
+    minutes_at_open = {}
+    running = 0.0
+    day = first_day
+    while day <= last_day:
+        open_at, close_at = active_window_for(day)
+        minutes_at_open[day] = running
+        running += (close_at - open_at).total_seconds() / 60.0
+        day += timedelta(days=1)
+
+    def elapsed(moment):
+        local_day = moment.date()
+        open_at, close_at = active_window_for(local_day)
+        inside = (min(moment, close_at) - open_at).total_seconds() / 60.0
+        return minutes_at_open[local_day] + max(0.0, inside)
+
+    active = df["timestamp"].map(elapsed).to_numpy()
+    df = df.copy()
+    df["slot"] = np.rint(active / NOMINAL_CYCLE_MINUTES).astype(int) + 1
+    return df
+
+
+def reconcile_transmissions(df, daily):
+    """
+    Account for every scheduled transmission in the span.
+
+    Returns the terms of the identity
+
+        expected == received + missed - surplus
+
+    where `missed` sums the empty slots before the first row, between
+    consecutive rows, and after the last row, and `surplus` counts rows that
+    occupied no new slot at all (duplicates and sub-minute repeat
+    transmissions). The residual is reported rather than absorbed: a non-zero
+    value means the accounting is wrong and should be investigated, not
+    explained away.
+    """
+    slots = df["slot"].to_numpy()
+    span_close_slot = int(daily["expected_rows"].sum())
+
+    # Unclamped per-interval losses: head, each inter-row gap, then the tail.
+    head = slots[0] - 1
+    between = np.diff(slots) - 1
+    tail = span_close_slot - slots[-1]
+
+    terms = np.concatenate(([head], between, [tail]))
+    missed = int(terms[terms > 0].sum())
+    surplus = int(-terms[terms < 0].sum())
+
+    return {
+        "expected": span_close_slot,
+        "received": len(df),
+        "missed": missed,
+        "surplus": surplus,
+        "residual": span_close_slot - (len(df) + missed - surplus),
+    }
 
 
 def compute_daily_row_completeness(df):
@@ -196,10 +281,14 @@ def verify_baseline_regimes(df):
             continue
 
         night_rows = int(is_night[mask].sum())
-        # Per hour-of-day slot, so the two windows are directly comparable
-        # despite covering 7 and 17 hours respectively.
-        night_rate = night_rows / len(NIGHT_HOURS)
-        day_rate = (len(rows) - night_rows) / (24 - len(NIGHT_HOURS))
+        # Per hour-of-day slot PER DAY, so the two regimes are directly
+        # comparable despite covering 7 vs 17 hours and 171 vs 101 days.
+        # Dividing by hours alone (as this did) made the shorter, later regime
+        # look busier per hour than the 24-hour one purely because it spans
+        # fewer days.
+        span_days = max(1, rows["timestamp"].dt.date.nunique())
+        night_rate = night_rows / len(NIGHT_HOURS) / span_days
+        day_rate = (len(rows) - night_rows) / (24 - len(NIGHT_HOURS)) / span_days
 
         regimes.append({
             "label": label,
