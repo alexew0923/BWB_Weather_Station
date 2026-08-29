@@ -27,7 +27,10 @@ stationwatch-live/
 ├── station_health.py        shared health logic (no printing, no UI)
 ├── station_watch.py         terminal CLI
 ├── app.py                   Streamlit dashboard
+├── dashboard.css            dashboard styling, loaded by app.py
+├── .streamlit/config.toml   theme: colours, fonts, radii
 ├── test_station_watch.py    tests, using controlled inputs only
+├── .env.example             template for local configuration
 ├── requirements.txt
 ├── README.md
 └── .gitignore
@@ -36,6 +39,29 @@ stationwatch-live/
 `station_health.py` is the single source of truth for the thresholds and the
 health calculation. Both interfaces render the same `HealthReport`; neither
 computes its own timestamps or thresholds.
+
+## Configuration
+
+The telemetry URL points at a specific Google Sheet, so it is supplied by the
+environment and is never committed. Everything else — the `America/Halifax`
+timezone, the expected sampling interval, and the health thresholds — is
+ordinary configuration that lives in source control.
+
+Copy the template and fill in the real CSV export URL of the telemetry Sheet:
+
+```bash
+cp .env.example .env
+```
+
+`.env` is git-ignored. An exported environment variable takes precedence over
+the file, so a scheduler or CI job can supply it instead:
+
+```bash
+export STATIONWATCH_SHEET_URL="https://docs.google.com/spreadsheets/d/<sheet-id>/export?format=csv&gid=0"
+```
+
+If the variable is not set, both interfaces report a monitor error naming the
+missing setting. They never report the station as OFFLINE because of it.
 
 ## Running the CLI
 
@@ -70,9 +96,13 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-The dashboard shows the current status as its most prominent element, followed by
-the latest telemetry timestamp, telemetry age, when StationWatch last checked,
-the configured thresholds, and recent telemetry context.
+The dashboard leads with the current state, then telemetry age, the latest
+timestamp and last check, the configured thresholds, recent arrival intervals,
+and recent readings. Its theme lives in `.streamlit/config.toml` and its layout
+styling in `dashboard.css`; the semantic status colours are defined once in
+`PALETTE` in `app.py` and shared by the stylesheet and the chart. Those colours
+hold their contrast against both the light and the dark background, so the page
+reads correctly in either theme without having to detect which is active.
 
 Refreshing is deliberately unhurried, because the station itself samples every
 few minutes:
@@ -90,6 +120,9 @@ Results are never cached, so any refresh shows current Google Sheets data.
 | DELAYED | newest telemetry is more than 10 and less than 30 minutes old |
 | OFFLINE | newest telemetry is 30 minutes old or more |
 | MONITOR ERROR | StationWatch has no usable observation of the source, so no status applies |
+
+A missing `STATIONWATCH_SHEET_URL`, an unreachable Sheet, and an unreadable CSV
+are all monitor errors, distinguished by the reason shown on screen.
 
 Thresholds live in `Thresholds` in `station_health.py`. The expected sampling
 interval (~5 min) is displayed for context and is not used in classification.
@@ -130,8 +163,9 @@ telemetry.
 
 ## Dependencies
 
-`streamlit` only, for the dashboard. Everything else — CSV parsing, HTTP,
-timezones — uses the Python standard library, so the CLI runs with no third-party
+`streamlit` only, for the dashboard. The chart uses Altair, which Streamlit
+already installs. Everything else — CSV parsing, HTTP, timezones, and reading
+`.env` — uses the Python standard library, so the CLI runs with no third-party
 packages installed.
 
 ## Future work
@@ -149,5 +183,6 @@ Not implemented, and deliberately out of scope for this version:
 - notifications/alerts, added later as a separate optional layer once an official
   Better With Bees project email account is available
 
-This version has no notification layer of any kind and requires no credentials or
-configuration.
+This version has no notification layer of any kind. Its only configuration is the
+telemetry URL described above; no credentials are needed to read a publicly
+viewable Sheet.

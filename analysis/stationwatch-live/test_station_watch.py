@@ -3,20 +3,27 @@
 These use controlled inputs; no test contacts Google Sheets.
 """
 
+import os
+import tempfile
 import unittest
 from datetime import datetime, timedelta
+from pathlib import Path
 from urllib.error import URLError
 from unittest.mock import patch
 
 import station_watch
 from station_health import (
     HALIFAX,
+    SHEET_URL_VARIABLE,
+    ConfigurationError,
     MonitorError,
     StationMonitor,
     Status,
     TelemetrySource,
     Thresholds,
     format_duration,
+    load_env_file,
+    sheet_url,
 )
 
 
@@ -139,11 +146,66 @@ class ParsingTests(unittest.TestCase):
         self.assertIn("holds no", raised.exception.summary)
 
 
+class ConfigurationTests(unittest.TestCase):
+    """The telemetry URL comes from the environment and is never hard-coded."""
+
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.env_file = Path(self.directory.name) / ".env"
+        # Keep every test independent of the developer's own environment.
+        patcher = patch.dict(os.environ, {}, clear=True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_missing_variable_fails_gracefully(self):
+        with patch("station_health.ENV_FILE", self.env_file):
+            with self.assertRaises(ConfigurationError) as raised:
+                sheet_url()
+        self.assertIn(SHEET_URL_VARIABLE, raised.exception.summary)
+        # A configuration problem is a monitor error, never a station status.
+        self.assertIsInstance(raised.exception, MonitorError)
+
+    def test_url_is_read_from_the_environment(self):
+        os.environ[SHEET_URL_VARIABLE] = "https://example.invalid/export?format=csv"
+        with patch("station_health.ENV_FILE", self.env_file):
+            self.assertEqual(sheet_url(), "https://example.invalid/export?format=csv")
+
+    def test_env_file_supplies_the_url_but_never_overrides_the_environment(self):
+        self.env_file.write_text(
+            "# comment\n\nSTATIONWATCH_SHEET_URL='https://example.invalid/from-file'\n",
+            encoding="utf-8",
+        )
+        load_env_file(self.env_file)
+        self.assertEqual(os.environ[SHEET_URL_VARIABLE], "https://example.invalid/from-file")
+
+        os.environ[SHEET_URL_VARIABLE] = "https://example.invalid/exported"
+        load_env_file(self.env_file)
+        self.assertEqual(os.environ[SHEET_URL_VARIABLE], "https://example.invalid/exported")
+
+    def test_source_construction_does_not_need_configuration(self):
+        source = TelemetrySource()  # must not raise
+        with patch("station_health.ENV_FILE", self.env_file):
+            with self.assertRaises(ConfigurationError):
+                source.download()
+
+    def test_cli_reports_a_missing_setting_without_claiming_offline(self):
+        with patch("station_health.ENV_FILE", self.env_file):
+            with patch("builtins.print") as printed:
+                exit_code = station_watch.main()
+        output = " ".join(str(call.args[0]) for call in printed.call_args_list)
+        self.assertEqual(exit_code, 1)
+        self.assertIn("MONITOR ERROR", output)
+        self.assertIn(SHEET_URL_VARIABLE, output)
+        self.assertNotIn("OFFLINE", output)
+
+
 class MonitorErrorTests(unittest.TestCase):
     def test_download_failure_raises_monitor_error(self):
+        source = TelemetrySource(url="https://example.invalid/export?format=csv")
         with patch("station_health.urlopen", side_effect=URLError("network unavailable")):
             with self.assertRaises(MonitorError) as raised:
-                TelemetrySource().download()
+                source.download()
         self.assertEqual(
             raised.exception.summary, "StationWatch could not retrieve the telemetry source."
         )

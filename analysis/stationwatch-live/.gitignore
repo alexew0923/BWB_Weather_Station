@@ -1,3 +1,8 @@
+# Local configuration: the real telemetry URL never belongs in Git.
+.env
+.env.*
+!.env.example
+
 __pycache__/
 *.pyc
 .venv/

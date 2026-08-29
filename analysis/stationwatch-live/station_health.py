@@ -11,18 +11,22 @@ is a ``MonitorError``, never an ``OFFLINE`` station status.
 
 import csv
 import io
+import os
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
+from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import urlopen
 from zoneinfo import ZoneInfo
 
 
-CSV_URL = (
-    "https://docs.google.com/spreadsheets/d/"
-    "1iJzvixnEx5QH2lkQNkN8xKZqpIyGO7FmEsa_qsyHCOI/export?format=csv&gid=0"
-)
+# The telemetry URL identifies a specific Sheet, so it is supplied by the
+# environment and never committed. Everything below it is ordinary configuration
+# that belongs in source control.
+SHEET_URL_VARIABLE = "STATIONWATCH_SHEET_URL"
+ENV_FILE = Path(__file__).with_name(".env")
+
 HALIFAX = ZoneInfo("America/Halifax")
 TIMESTAMP_COLUMN = "Timestamp"
 TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S"
@@ -47,7 +51,45 @@ class MonitorError(Exception):
         self.summary = summary or self.DEFAULT_SUMMARY
 
 
+class ConfigurationError(MonitorError):
+    """The telemetry source has not been configured.
+
+    A missing setting is still a reason StationWatch cannot observe anything, so
+    it behaves like any other monitor error rather than becoming a station status.
+    """
+
+
 UNREADABLE_SUMMARY = "StationWatch could not make sense of the telemetry source."
+
+
+def load_env_file(path=None):
+    """Read ``KEY=value`` lines from a local .env file into the environment.
+
+    Real environment variables win, so an exported value is never overwritten.
+    Absent or unreadable files are ignored: .env is optional.
+    """
+    try:
+        text = (path or ENV_FILE).read_text(encoding="utf-8")
+    except OSError:
+        return
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        os.environ.setdefault(key.strip(), value.strip().strip("\"'"))
+
+
+def sheet_url():
+    """Return the configured telemetry URL, or raise ConfigurationError."""
+    load_env_file()
+    url = (os.environ.get(SHEET_URL_VARIABLE) or "").strip()
+    if not url:
+        raise ConfigurationError(
+            f"{SHEET_URL_VARIABLE} is not set; copy .env.example to .env and fill it in",
+            summary=f"StationWatch has no telemetry source configured ({SHEET_URL_VARIABLE}).",
+        )
+    return url
 
 
 class Status(Enum):
@@ -131,10 +173,17 @@ class TelemetrySource:
     readings in a test) without touching the health logic.
     """
 
-    def __init__(self, url=CSV_URL, timezone=HALIFAX, timeout=15):
-        self.url = url
+    def __init__(self, url=None, timezone=HALIFAX, timeout=15):
+        # Left unresolved until it is needed, so building a source never fails
+        # and a missing setting surfaces as an ordinary monitor error.
+        self._url = url
         self.timezone = timezone
         self.timeout = timeout
+
+    @property
+    def url(self):
+        """The configured telemetry URL, read from the environment on demand."""
+        return self._url or sheet_url()
 
     def read_timestamps(self):
         """Return every valid telemetry timestamp, oldest first."""
@@ -142,8 +191,9 @@ class TelemetrySource:
 
     def download(self):
         """Return the CSV text, or raise MonitorError if it cannot be fetched."""
+        url = self.url
         try:
-            with urlopen(self.url, timeout=self.timeout) as response:
+            with urlopen(url, timeout=self.timeout) as response:
                 return response.read().decode("utf-8-sig")
         except (HTTPError, URLError, TimeoutError, OSError, UnicodeError) as error:
             raise MonitorError(f"could not retrieve the telemetry source: {error}") from error

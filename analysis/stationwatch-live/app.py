@@ -3,8 +3,14 @@
     streamlit run app.py
 
 All health logic lives in ``station_health``; this file only renders it.
+Colours are defined once in ``PALETTE`` below and used by both the stylesheet
+(``dashboard.css``) and the chart, so no colour is written twice.
 """
 
+from html import escape
+from pathlib import Path
+
+import altair as alt
 import streamlit as st
 
 from station_health import (
@@ -18,145 +24,268 @@ from station_health import (
 
 
 REFRESH_SECONDS = 45
-RECENT_TABLE_ROWS = 15
+RECENT_TABLE_ROWS = 8
 RECENT_GAP_READINGS = 30
+STYLESHEET = Path(__file__).with_name("dashboard.css")
 
-STATUS_COLOURS = {
-    Status.HEALTHY: "#1f9d55",
-    Status.DELAYED: "#c98a04",
-    Status.OFFLINE: "#c33131",
+# The single source of truth for semantic colour, shared by dashboard.css (as
+# --sw-* properties) and the chart. Each value keeps a contrast ratio above 3.5
+# against both the light and the dark page background, so one palette serves
+# both themes and the app never has to detect which theme is active.
+PALETTE = {
+    "green": "#15803d",
+    "amber": "#c2740a",
+    "red": "#d43b3b",
+    "gray": "#78827f",
+    "accent": "#128b80",
 }
-ERROR_COLOUR = "#6b7280"
+MONO_STACK = "'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace"
 
-# Just enough CSS for a readable status indicator; the rest is native Streamlit.
-STATUS_CSS = """
-<style>
-.sw-status { display: flex; align-items: center; gap: 0.6rem; margin: 0.2rem 0 0.4rem; }
-.sw-dot { width: 0.85rem; height: 0.85rem; border-radius: 50%; flex: none; }
-.sw-label { font-size: 2.4rem; font-weight: 700; letter-spacing: 0.04em; line-height: 1.1; }
-.sw-summary { font-size: 1.05rem; opacity: 0.85; margin-bottom: 0.5rem; }
-/* Timestamps are long; the default metric size truncates them. */
-[data-testid="stMetricValue"] { font-size: 1.3rem; font-variant-numeric: tabular-nums; }
-</style>
-"""
+# Which palette entry each state uses. dashboard.css keys off the same slugs.
+STATE_SLUGS = {Status.HEALTHY: "healthy", Status.DELAYED: "delayed", Status.OFFLINE: "offline"}
 
 
-def render_status_banner(label, summary, colour):
-    """Render the page's most prominent element: the current status."""
-    st.markdown(
-        f'<div class="sw-status">'
-        f'<span class="sw-dot" style="background:{colour}"></span>'
-        f'<span class="sw-label" style="color:{colour}">{label}</span>'
-        f"</div>"
-        f'<div class="sw-summary">{summary}</div>',
-        unsafe_allow_html=True,
+def apply_design_tokens():
+    """Publish the palette as CSS variables, then load the stylesheet."""
+    variables = "\n".join(f"  --sw-{name}: {value};" for name, value in PALETTE.items())
+    st.html(
+        f"<style>\n:root {{\n{variables}\n  --sw-mono: {MONO_STACK};\n}}\n"
+        f"{STYLESHEET.read_text(encoding='utf-8')}\n</style>"
     )
 
 
-def render_measurements(report):
-    """Show the latest timestamp, telemetry age, and when we last checked."""
-    latest, age, checked = st.columns(3)
-    latest.metric("Latest telemetry", format_timestamp(report.latest_timestamp))
-    age.metric("Telemetry age", report.age_text)
-    checked.metric("Last checked", format_timestamp(report.checked_at))
-
-
-def render_thresholds(thresholds):
-    """Show the configured thresholds as low-prominence context."""
-    st.caption(
-        f"Expected sampling interval: ~{thresholds.expected_interval_minutes:g} min "
-        f"· Healthy: ≤ {thresholds.healthy_max_minutes:g} min "
-        f"· Delayed: {thresholds.healthy_max_minutes:g}–{thresholds.offline_min_minutes:g} min "
-        f"· Offline: > {thresholds.offline_min_minutes:g} min"
+def render_header():
+    """Identity and purpose, stated once at the top of the page."""
+    st.html(
+        '<div class="sw-eyebrow">Better With Bees</div>'
+        '<div class="sw-title">StationWatch Live</div>'
+        '<p class="sw-subtitle">Live telemetry delivery monitoring</p>'
     )
 
 
-def render_recent_context(report):
-    """Show recent arrivals and how far apart they were."""
-    readings = report.recent_timestamps[-RECENT_TABLE_ROWS:]
-    gaps = report.recent_gaps(limit=RECENT_GAP_READINGS)
+def render_hero(state_slug, label, summary, age_label, age_value, facts):
+    """The dominant element: current state, telemetry age, and key timestamps.
 
-    table, chart = st.columns([1, 2])
-    with table:
-        st.caption(f"Most recent {len(readings)} readings")
-        st.dataframe(
-            {"Reading (Halifax)": [format_timestamp(moment) for moment in reversed(readings)]},
-            hide_index=True,
-            width="stretch",
+    ``facts`` is a sequence of ``(label, value)`` pairs shown along the footer.
+    """
+    fact_markup = "".join(
+        f'<div><div class="sw-hero__fact-label">{escape(label)}</div>'
+        f'<div class="sw-hero__fact-value">{escape(value)}</div></div>'
+        for label, value in facts
+    )
+    st.html(
+        f'<div class="sw-hero" data-state="{state_slug}">'
+        '<div class="sw-hero__top">'
+        "<div>"
+        '<div class="sw-eyebrow">Current state</div>'
+        f'<div class="sw-hero__state"><span class="sw-hero__dot"></span>{escape(label)}</div>'
+        f'<p class="sw-hero__summary">{escape(summary)}</p>'
+        "</div>"
+        '<div class="sw-hero__age">'
+        f'<div class="sw-eyebrow">{escape(age_label)}</div>'
+        f'<div class="sw-hero__age-value">{escape(age_value)}</div>'
+        "</div>"
+        "</div>"
+        f'<div class="sw-hero__facts">{fact_markup}</div>'
+        "</div>"
+    )
+
+
+def render_secondary_metrics(report):
+    """Compact operational numbers: what is expected, and where we actually are."""
+    thresholds = report.thresholds
+    delay_minutes = report.age_seconds / 60 - thresholds.expected_interval_minutes
+    with st.container(horizontal=True):
+        st.metric(
+            "Expected interval",
+            f"~{thresholds.expected_interval_minutes:g} min",
+            border=True,
+            help="How often the station is expected to sample. Context only — it is "
+            "not used to classify the status.",
         )
-    with chart:
-        st.caption(f"Minutes since previous reading (last {len(gaps)} arrivals)")
-        if gaps:
-            st.bar_chart(
-                {
-                    "Arrival": [moment for moment, _ in gaps],
-                    "Minutes since previous": [round(minutes, 1) for _, minutes in gaps],
+        st.metric(
+            "Beyond expected",
+            f"{delay_minutes:.0f} min" if delay_minutes >= 0.5 else "On schedule",
+            border=True,
+            help="How far the newest reading is past the expected sampling interval.",
+        )
+        st.metric(
+            "Healthy limit",
+            f"≤ {thresholds.healthy_max_minutes:g} min",
+            border=True,
+            help="Telemetry at or under this age is HEALTHY.",
+        )
+        st.metric(
+            "Offline limit",
+            f"> {thresholds.offline_min_minutes:g} min",
+            border=True,
+            help=f"Between the two limits the status is DELAYED; at or beyond "
+            f"{thresholds.offline_min_minutes:g} minutes it is OFFLINE.",
+        )
+
+
+def arrival_gap_chart(gaps, thresholds):
+    """One chart: how long each recent reading waited behind the one before it.
+
+    Bars are coloured by whether the gap stayed within the healthy limit, and a
+    dashed rule marks the expected sampling interval, so "is telemetry arriving
+    normally?" is answerable at a glance without a legend.
+    """
+    data = [
+        {
+            "Arrival": arrival.isoformat(),
+            "Gap": round(minutes, 1),
+            "Within limit": "Within" if minutes <= thresholds.healthy_max_minutes else "Over",
+        }
+        for arrival, minutes in gaps
+    ]
+
+    bars = (
+        alt.Chart(alt.Data(values=data))
+        .mark_bar(size=9, cornerRadiusTopLeft=2, cornerRadiusTopRight=2)
+        .encode(
+            x=alt.X("Arrival:T", title="Arrival (Halifax)", axis=alt.Axis(format="%H:%M")),
+            y=alt.Y("Gap:Q", title="Minutes since previous"),
+            color=alt.Color(
+                "Within limit:N",
+                scale=alt.Scale(
+                    domain=["Within", "Over"], range=[PALETTE["accent"], PALETTE["amber"]]
+                ),
+                legend=None,
+            ),
+            tooltip=[
+                alt.Tooltip("Arrival:T", title="Arrival", format="%Y-%m-%d %H:%M"),
+                alt.Tooltip("Gap:Q", title="Minutes since previous"),
+            ],
+        )
+    )
+    expected = (
+        alt.Chart(alt.Data(values=[{"Expected": thresholds.expected_interval_minutes}]))
+        .mark_rule(strokeDash=[4, 4], color=PALETTE["gray"], opacity=0.9)
+        .encode(y="Expected:Q")
+    )
+    return (bars + expected).properties(height=250)
+
+
+def render_recent_activity(report):
+    """Recent arrival intervals beside the readings they came from."""
+    gaps = report.recent_gaps(limit=RECENT_GAP_READINGS)
+    readings = report.recent_timestamps[-RECENT_TABLE_ROWS:]
+
+    chart_column, table_column = st.columns([2, 1], gap="medium")
+    with chart_column:
+        st.html('<div class="sw-section">Recent arrival intervals</div>')
+        with st.container(border=True):
+            if gaps:
+                st.altair_chart(arrival_gap_chart(gaps, report.thresholds), width="stretch")
+                caption = (
+                    f"Last {len(gaps)} arrivals. The dashed line marks the expected "
+                    f"~{report.thresholds.expected_interval_minutes:g} min interval; amber bars "
+                    f"waited longer than the {report.thresholds.healthy_max_minutes:g} min "
+                    "healthy limit."
+                )
+                if report.status is not Status.HEALTHY:
+                    # Every bar is a completed wait. The one happening now has no
+                    # bar yet, so say so rather than letting the chart look calm.
+                    caption += (
+                        f" The current {report.age_text} wait has no bar yet: the next "
+                        "reading has not arrived."
+                    )
+                st.caption(caption)
+            else:
+                st.caption(
+                    "Only one reading is available, so no arrival interval can be measured yet."
+                )
+
+    with table_column:
+        st.html('<div class="sw-section">Recent readings</div>')
+        with st.container(border=True):
+            st.dataframe(
+                {"Reading": [format_timestamp(moment) for moment in reversed(readings)]},
+                hide_index=True,
+                height=318,
+                width="stretch",
+                column_config={
+                    "Reading": st.column_config.TextColumn("Halifax local time", width="medium")
                 },
-                x="Arrival",
-                y="Minutes since previous",
-                height=260,
             )
-        else:
-            st.info("Only one reading is available, so no arrival gap can be shown.")
 
 
 def render_observation_boundary():
-    """State plainly what an OFFLINE reading does and does not prove."""
-    with st.expander("What StationWatch can and cannot tell you"):
+    """State plainly what the dashboard does and does not know."""
+    with st.expander("Observation boundary", icon=":material/help_outline:"):
         st.write(OBSERVATION_NOTE)
-        st.write("Potential upstream failure domains include:")
-        st.write("\n".join(f"- {domain}" for domain in UPSTREAM_DOMAINS))
-        st.caption("StationWatch does not yet diagnose which of these failed.")
+        st.caption(
+            "Any of these could be responsible for a delivery gap, and StationWatch "
+            "cannot yet tell which: " + ", ".join(UPSTREAM_DOMAINS) + "."
+        )
+
+
+def render_monitor_error(error, monitor):
+    """A monitoring failure, kept visibly distinct from an OFFLINE station."""
+    render_hero(
+        "error",
+        "MONITOR ERROR",
+        f"{error.summary} Current telemetry status cannot be determined.",
+        "Telemetry age",
+        "—",
+        [("Reason", error.detail), ("Last attempt", format_timestamp(monitor.now()))],
+    )
+    st.caption(
+        ":material/info: This is a monitoring failure, not a station outage. StationWatch has "
+        "no usable observation of the data source, so no telemetry status applies — an OFFLINE "
+        "reading would mean the source *was* read and its newest telemetry is stale."
+    )
 
 
 def render_check():
     """Run one live check and render everything that depends on it."""
     monitor = StationMonitor()
-    try:
-        report = monitor.check()
-    except MonitorError as error:
-        render_status_banner(
-            "MONITOR ERROR",
-            f"{error.summary} Current telemetry status cannot be determined.",
-            ERROR_COLOUR,
+    with st.skeleton(height=210):
+        try:
+            report = monitor.check()
+        except MonitorError as error:
+            render_monitor_error(error, monitor)
+            return
+
+        render_hero(
+            STATE_SLUGS[report.status],
+            str(report.status),
+            report.summary,
+            "Telemetry age",
+            report.age_text,
+            [
+                ("Latest telemetry", format_timestamp(report.latest_timestamp)),
+                ("Last checked", format_timestamp(report.checked_at)),
+            ],
         )
-        st.warning(f"Detail: {error.detail}")
-        st.caption(
-            "This is a monitoring failure, not a station outage: StationWatch has "
-            "no usable observation of the data source, so no telemetry status applies."
-        )
-        render_thresholds(monitor.thresholds)
-        return
 
-    render_status_banner(str(report.status), report.summary, STATUS_COLOURS[report.status])
-    render_measurements(report)
-    render_thresholds(report.thresholds)
-    st.divider()
-    render_recent_context(report)
+    render_secondary_metrics(report)
+    st.space("small")
+    render_recent_activity(report)
 
 
-def main():
-    st.set_page_config(page_title="StationWatch Live", page_icon="●", layout="centered")
-    st.markdown(STATUS_CSS, unsafe_allow_html=True)
+st.set_page_config(
+    page_title="StationWatch Live",
+    page_icon=":material/sensors:",
+    layout="wide",
+)
+apply_design_tokens()
+render_header()
 
-    st.caption("Better With Bees")
-    st.title("StationWatch Live")
-
-    controls, toggle = st.columns([1, 2], vertical_alignment="center")
+controls = st.container(horizontal=True, horizontal_alignment="right")
+with controls:
     # The button needs no handler: any interaction reruns the script, and every
-    # run downloads the Sheet again, so a refresh never shows cached data.
-    controls.button("Refresh now", width="stretch")
-    auto = toggle.toggle(f"Auto-refresh every {REFRESH_SECONDS}s", value=True)
+    # run re-reads the Sheet, so a refresh never shows cached data.
+    st.button("Refresh now", icon=":material/refresh:", type="primary")
+    auto_refresh = st.toggle(
+        f"Auto every {REFRESH_SECONDS}s",
+        value=True,
+        help="Re-reads the Sheet on a timer. The station samples every few minutes, "
+        "so checking faster would add load without adding information.",
+    )
 
-    # Only the status panel repeats on a timer, and no faster than the station
-    # samples. run_every=None leaves refreshing entirely manual.
-    panel = st.fragment(render_check, run_every=REFRESH_SECONDS if auto else None)
+# Only the status panel repeats on a timer; run_every=None leaves it manual.
+st.fragment(render_check, run_every=REFRESH_SECONDS if auto_refresh else None)()
 
-    st.divider()
-    panel()
-
-    st.divider()
-    render_observation_boundary()
-
-
-main()
+render_observation_boundary()

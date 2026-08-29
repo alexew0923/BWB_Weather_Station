@@ -1,0 +1,176 @@
+/* StationWatch Live — dashboard styling.
+ *
+ * Colour rules:
+ *   · Semantic colours (--sw-green/amber/red/gray/accent) come from PALETTE in
+ *     app.py and are injected as custom properties. They are chosen to hold
+ *     contrast on both the light and the dark background.
+ *   · Neutral colours are derived from the inherited text colour below, so they
+ *     follow whichever theme Streamlit is showing without being detected.
+ * Base colours, fonts and radii come from .streamlit/config.toml.
+ *
+ * Sections: 0 tokens · 1 page frame · 2 header · 3 status hero · 4 sections
+ */
+
+/* ---------- 0. derived neutral tokens ----------------------------------- */
+
+.stApp {
+  --sw-muted: color-mix(in srgb, currentColor 62%, transparent);
+  --sw-border: color-mix(in srgb, currentColor 17%, transparent);
+  --sw-surface: color-mix(in srgb, currentColor 3.5%, transparent);
+}
+
+/* ---------- 1. page frame ---------------------------------------------- */
+
+/* A deliberate reading width: wide enough for the chart, never sprawling. */
+.stMainBlockContainer {
+  max-width: 1120px;
+  padding-top: 4.5rem;
+  padding-bottom: 4rem;
+}
+
+/* ---------- 2. header --------------------------------------------------- */
+
+.sw-eyebrow {
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--sw-muted);
+}
+
+.sw-title {
+  font-size: 2.1rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+  margin: 0.25rem 0 0.2rem;
+}
+
+.sw-subtitle {
+  font-size: 0.95rem;
+  color: var(--sw-muted);
+  margin: 0;
+}
+
+/* ---------- 3. status hero ---------------------------------------------- */
+
+/* The one element that must read from across the room. Its accent colour is
+ * switched by the data-state attribute; nothing else about it changes. */
+.sw-hero {
+  --sw-accent: var(--sw-gray);
+  border: 1px solid var(--sw-border);
+  border-left: 4px solid var(--sw-accent);
+  border-radius: 10px;
+  background:
+    linear-gradient(
+      100deg,
+      color-mix(in srgb, var(--sw-accent) 9%, transparent),
+      transparent 62%
+    ),
+    var(--sw-surface);
+  padding: 1.6rem 1.75rem 1.35rem;
+  margin-bottom: 1.5rem;
+}
+
+.sw-hero[data-state="healthy"] { --sw-accent: var(--sw-green); }
+.sw-hero[data-state="delayed"] { --sw-accent: var(--sw-amber); }
+.sw-hero[data-state="offline"] { --sw-accent: var(--sw-red); }
+.sw-hero[data-state="error"]   { --sw-accent: var(--sw-gray); }
+
+.sw-hero__top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1.5rem;
+}
+
+.sw-hero__state {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  font-size: clamp(2rem, 5vw, 2.9rem);
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  line-height: 1.05;
+  color: var(--sw-accent);
+  margin: 0.3rem 0 0.45rem;
+}
+
+/* A ring rather than a solid dot: reads as an instrument light, not a bullet. */
+.sw-hero__dot {
+  width: 0.72em;
+  height: 0.72em;
+  border-radius: 50%;
+  flex: none;
+  background: var(--sw-accent);
+  box-shadow: 0 0 0 0.22em color-mix(in srgb, var(--sw-accent) 22%, transparent);
+}
+
+.sw-hero__summary {
+  font-size: 1.02rem;
+  line-height: 1.5;
+  margin: 0;
+  max-width: 46ch;
+}
+
+/* The age is the second thing you look at, so it gets figure treatment. */
+.sw-hero__age {
+  text-align: right;
+  min-width: 8.5rem;
+}
+
+.sw-hero__age-value {
+  font-family: var(--sw-mono);
+  font-size: clamp(1.6rem, 3.4vw, 2.1rem);
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  margin-top: 0.35rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.sw-hero__facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 2.25rem;
+  margin-top: 1.35rem;
+  padding-top: 1.05rem;
+  border-top: 1px solid var(--sw-border);
+}
+
+.sw-hero__fact-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--sw-muted);
+}
+
+.sw-hero__fact-value {
+  font-family: var(--sw-mono);
+  font-size: 0.92rem;
+  margin-top: 0.2rem;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 640px) {
+  .sw-hero__age { text-align: left; }
+}
+
+/* ---------- 4. section headings ----------------------------------------- */
+
+.sw-section {
+  font-size: 0.74rem;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--sw-muted);
+  margin: 0.4rem 0 0.15rem;
+}
+
+/* Metric values are timestamps and durations: keep the digits aligned. */
+[data-testid="stMetricValue"] {
+  font-family: var(--sw-mono);
+  font-size: 1.18rem;
+  font-variant-numeric: tabular-nums;
+}
