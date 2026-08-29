@@ -143,6 +143,39 @@ handling, gap severity and day classification. Presentation code and figure
 generation are deliberately untested -- a wrong plot is visible, a wrong
 denominator is not.
 
+## Incident Explorer
+
+`incident_report.py` complements the aggregate audit by examining one interval's
+telemetry immediately before, during, and after an incident. It reuses the same
+validated timestamps, Halifax timezone, operating regimes, expected schedule,
+gap thresholds, sensor fields, and plausible ranges as the main audit.
+
+Investigate an explicit half-open interval (`start` included, `end` excluded):
+
+```bash
+python incident_report.py data/HistoricalData.csv \
+  --start "2026-03-06 14:20" --end "2026-03-09 14:48"
+```
+
+Or select the 12th real outage in chronological order from the existing outage
+analysis (scheduled shutdowns and sub-minute repeats are excluded):
+
+```bash
+python incident_report.py data/HistoricalData.csv --outage 12 \
+  --before-hours 12 --after-hours 12
+```
+
+Outputs go to `incident_output/` by default: one deterministic telemetry timeline
+PNG and one JSON summary containing the incident, context windows, sensor and
+battery evidence, and rule-based interpretation. Offset-free CLI timestamps are
+Halifax local time. Ambiguous fall-back timestamps require an explicit UTC
+offset, such as `2025-11-02 01:30-03:00`.
+
+The explorer describes only what reached the historical CSV / Google Sheets
+path. Missing telemetry cannot identify a sensor, transmitter, power, ESP-NOW,
+receiver, I2C, Wi-Fi, Apps Script, or Google Sheets fault, and the tool does not
+provide component-level diagnosis or claim root cause.
+
 ---
 
 # Key Results
