@@ -218,7 +218,8 @@ def analyze_soil_response(dataset, interval, context=None, config=None):
     )
 
     deviations = response_values - baseline
-    # Once started inside the attribution window a run may continue past it.
+    # Flags stop at the attribution boundary, so a run cannot begin -- or
+    # continue -- beyond it.
     qualifying = (deviations.abs() >= threshold) & (
         deviations.index <= attribution_end
     )
@@ -230,8 +231,29 @@ def analyze_soil_response(dataset, interval, context=None, config=None):
         dataset.config.quality.continuity_gap_minutes,
     )
 
-    peak_position = deviations.abs().idxmax()
-    peak_deviation = float(deviations.loc[peak_position])
+    # Every ATTRIBUTED figure is measured inside the attribution window. The
+    # verdict was already gated on that window; measuring the magnitude over the
+    # wider one let a deviation the engine had just ruled un-attributable be
+    # reported as this event's response (audit finding SOIL-01). On the
+    # historical record one of eight detections reported a peak 24.4 h after the
+    # event start against its own 19.1 h limit.
+    attributed = deviations.loc[:attribution_end]
+    if attributed.empty:
+        attributed = deviations.iloc[:1]
+    peak_position = attributed.abs().idxmax()
+    peak_deviation = float(attributed.loc[peak_position])
+
+    # The wider window is kept for charts only, on clearly separate fields.
+    context_position = deviations.abs().idxmax()
+    context_peak_deviation = float(deviations.loc[context_position])
+    context_measurements = {
+        "context_window_hours": settings.post_event_window_hours,
+        "context_peak_deviation_counts": context_peak_deviation,
+        "context_peak_counts": float(response_values.loc[context_position]),
+        "context_time_to_peak_minutes": (
+            context_position - interval.start_time
+        ).total_seconds() / 60.0,
+    }
 
     evidence = [
         Evidence(
@@ -265,8 +287,11 @@ def analyze_soil_response(dataset, interval, context=None, config=None):
         evidence.append(
             Evidence(
                 StatementKind.STATISTICAL_EVIDENCE,
-                f"The largest deviation from baseline in the whole post-event "
-                f"window was {peak_deviation:+.0f} counts. No deviation reached "
+                f"The largest deviation from baseline within the window in "
+                f"which a change may be attributed to this event was "
+                f"{peak_deviation:+.0f} counts (the largest anywhere in the "
+                f"{settings.post_event_window_hours:g}-hour post-event window "
+                f"was {context_peak_deviation:+.0f}). No deviation reached "
                 f"the {threshold:.0f}-count threshold for at least "
                 f"{settings.min_persistence_samples} consecutive observations "
                 f"within {settings.max_response_delay_hours:g} hours of the "
@@ -293,6 +318,7 @@ def analyze_soil_response(dataset, interval, context=None, config=None):
             ambiguous_zero_fraction=zero_fraction,
             evidence=tuple(evidence),
             version=SOIL_RESPONSE_VERSION,
+            **context_measurements,
         )
 
     start_position, end_position = run
@@ -347,6 +373,7 @@ def analyze_soil_response(dataset, interval, context=None, config=None):
         ambiguous_zero_fraction=zero_fraction,
         evidence=tuple(evidence),
         version=SOIL_RESPONSE_VERSION,
+        **context_measurements,
     )
 
 

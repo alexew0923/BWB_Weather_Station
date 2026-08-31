@@ -372,6 +372,17 @@ class SoilResponse(Serialisable):
     peak_counts: float | None = None
     time_to_peak_minutes: float | None = None
     persistence_minutes: float | None = None
+    #: --- context window, for visualisation only -------------------------
+    #: The same measurements taken over the wider post-event window instead of
+    #: the attribution window. They exist so a chart can show the whole
+    #: trajectory. NOTHING in the attribution path may read them: a deviation
+    #: out here is, by the engine's own rule, too late to be attributed to the
+    #: event, and reporting it as the event's response is the defect audit
+    #: finding SOIL-01 describes.
+    context_window_hours: float | None = None
+    context_peak_deviation_counts: float | None = None
+    context_peak_counts: float | None = None
+    context_time_to_peak_minutes: float | None = None
     diurnal_adjusted: bool = False
     baseline_samples: int = 0
     response_samples: int = 0

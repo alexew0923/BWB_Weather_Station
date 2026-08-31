@@ -39,6 +39,12 @@ from .data_sources import SourceReference, resolve_historical_source, retrieve_c
 from .errors import EmptyDatasetError, SchemaError, SourceFormatError
 from .version import DATASET_SCHEMA_VERSION
 
+#: Reason codes for known device failure signatures. Kept short and few on
+#: purpose: this is a record of the two patterns this deployment actually
+#: produces, not a general fault taxonomy.
+SHT4X_FAULT = "known_sht40_fault_signature"
+MULTI_SENSOR_FAULT = "known_multi_sensor_fault_signature"
+
 
 @dataclass(frozen=True)
 class IngestionReport:
@@ -54,6 +60,14 @@ class IngestionReport:
     unparseable_timestamps: int = 0
     duplicate_timestamps: int = 0
     corrupt_frames: int = 0
+    #: Frames carrying a known instrument failure signature. Distinct from
+    #: ``corrupt_frames`` (a damaged buffer) and from ``implausible_values`` (a
+    #: number outside its physical range): these readings are inside every
+    #: plausible range and are still not measurements.
+    sensor_fault_frames: int = 0
+    #: Breakdown of the above by reason code, e.g.
+    #: ``{"known_sht40_fault_signature": 74}``.
+    sensor_fault_signatures: dict = field(default_factory=dict)
     non_numeric_cells: dict = field(default_factory=dict)
     implausible_values: dict = field(default_factory=dict)
     ambiguous_dst_timestamps: int = 0
@@ -67,6 +81,8 @@ class IngestionReport:
             "unparseable_timestamps": self.unparseable_timestamps,
             "duplicate_timestamps": self.duplicate_timestamps,
             "corrupt_frames": self.corrupt_frames,
+            "sensor_fault_frames": self.sensor_fault_frames,
+            "sensor_fault_signatures": dict(self.sensor_fault_signatures),
             "non_numeric_cells": dict(self.non_numeric_cells),
             "implausible_values": dict(self.implausible_values),
             "ambiguous_dst_timestamps": self.ambiguous_dst_timestamps,
@@ -82,13 +98,27 @@ class EnvironmentalDataset:
     returns a new dataset rather than mutating this one.
     """
 
-    def __init__(self, frame, valid, source, config, report):
+    def __init__(self, frame, valid, source, config, report, fault_reasons=None):
         self._frame = frame
         self._valid = valid
         self.source = source
         self.config = config
         self.report = report
         self.schema_version = DATASET_SCHEMA_VERSION
+        self._fault_reasons = (
+            pd.Series("", index=frame.index, dtype="object")
+            if fault_reasons is None
+            else fault_reasons
+        )
+
+    @property
+    def fault_reasons(self):
+        """Per-row device-fault reason code; empty string where none applies.
+
+        Exposed so a verification run can say *why* a reading was excluded
+        rather than only that it was.
+        """
+        return self._fault_reasons
 
     # -- basic shape -------------------------------------------------------
 
@@ -180,7 +210,10 @@ class EnvironmentalDataset:
         if end is not None:
             keep = frame.index <= pd.Timestamp(end)
             frame, valid = frame[keep], valid[keep]
-        return EnvironmentalDataset(frame, valid, self.source, self.config, self.report)
+        return EnvironmentalDataset(
+            frame, valid, self.source, self.config, self.report,
+            self._fault_reasons.reindex(frame.index),
+        )
 
     # -- cadence and coverage ---------------------------------------------
 
@@ -307,6 +340,71 @@ def _count_ambiguous(log_lines):
         if match:
             return int(match.group(1))
     return 0
+
+
+def device_fault_signatures(canonical, quality):
+    """Label rows carrying a known instrument failure signature.
+
+    This is stage 3 of the quality pipeline and is deliberately distinct from
+    stage 2, physical plausibility. Plausibility asks "could this number be a
+    measurement of this quantity at all"; this asks the narrower question "does
+    this frame carry a pattern a known part emits when it has failed". A value
+    can sit inside every physical range and still be a fault code, which is
+    exactly what happens here.
+
+    Nothing is mutated: the raw values stay in the frame and only the analytical
+    validity masks change, so a defect can still be counted, charted and
+    reconciled against the source export.
+
+    Returns a Series of reason codes aligned to ``canonical``; the empty string
+    means "no known signature". The more specific signature wins, so a frame is
+    labelled with one reason rather than several.
+    """
+    reasons = pd.Series("", index=canonical.index, dtype="object")
+
+    humidity = canonical[sensors.HUMIDITY]
+    temperature = canonical[sensors.TEMPERATURE]
+    pressure = canonical[sensors.PRESSURE]
+
+    # -- most specific first: two separate parts reporting zero together ------
+    if quality.treat_multi_sensor_zero_frames_as_invalid:
+        multi = (
+            (temperature == 0.0) & (humidity == 0.0) & (pressure == 0.0)
+        ).fillna(False)
+        reasons[multi] = MULTI_SENSOR_FAULT
+    else:
+        multi = pd.Series(False, index=canonical.index)
+
+    # -- the SHT4x pair ------------------------------------------------------
+    faults = tuple(quality.sht4x_fault_humidity_values)
+    if quality.treat_sht4x_fault_frames_as_invalid and faults:
+        # Exact equality: these are literal repeated fault codes, not a region
+        # of a continuous distribution, so a tolerance would only widen the rule
+        # beyond what the evidence supports.
+        #
+        # The pair is required. Humidity alone is not evidence of a fault -- a
+        # genuinely dry hour must not be called a broken sensor -- and
+        # temperature alone is not either, which is what keeps real 0 degC
+        # winter readings in the dataset.
+        sht4x = (
+            humidity.isin(faults) & ((temperature == 0.0) | temperature.isna())
+        ).fillna(False)
+        reasons[sht4x & ~multi] = SHT4X_FAULT
+
+    return reasons
+
+
+#: Channels excluded for each signature. Only the parts the evidence implicates
+#: are masked; the wetness and soil channels come from other devices and are
+#: left to be judged on their own.
+FAULT_SIGNATURE_CHANNELS = {
+    SHT4X_FAULT: (sensors.TEMPERATURE, sensors.HUMIDITY),
+    MULTI_SENSOR_FAULT: (
+        sensors.TEMPERATURE,
+        sensors.HUMIDITY,
+        sensors.PRESSURE,
+    ),
+}
 
 
 def _resolve_timestamp_column(columns):
@@ -465,19 +563,46 @@ def build_dataset_from_csv_text(csv_text, config=None, source=None):
             mask = mask & (values != 0)
         valid[name] = mask.fillna(False)
 
+    # -- device fault signatures ---------------------------------------------
+    # Stage 3, applied after physical plausibility and kept separate from it: a
+    # fault code can sit inside every physical range and still not be a
+    # measurement. Raw values are never touched -- only the analytical masks.
+    fault_reasons = device_fault_signatures(canonical, config.quality)
+    sensor_fault_frames = int((fault_reasons != "").sum())
+    fault_signature_counts = {
+        reason: int(count)
+        for reason, count in fault_reasons[fault_reasons != ""]
+        .value_counts()
+        .items()
+    }
+    for reason, channels in FAULT_SIGNATURE_CHANNELS.items():
+        matched = fault_reasons == reason
+        if not matched.any():
+            continue
+        for channel in channels:
+            valid.loc[matched, channel] = False
+        notes.append(
+            f"{int(matched.sum())} frame(s) excluded as {reason} "
+            f"({', '.join(channels)})"
+        )
+
     report = IngestionReport(
         rows_read=rows_read,
         rows_kept=len(canonical),
         unparseable_timestamps=unparseable,
         duplicate_timestamps=duplicate_timestamps,
         corrupt_frames=corrupt_frames,
+        sensor_fault_frames=sensor_fault_frames,
+        sensor_fault_signatures=fault_signature_counts,
         non_numeric_cells=non_numeric,
         implausible_values=implausible,
         ambiguous_dst_timestamps=ambiguous,
         missing_optional_columns=missing_optional,
         notes=tuple(notes),
     )
-    return EnvironmentalDataset(canonical, valid, source, config, report)
+    return EnvironmentalDataset(
+        canonical, valid, source, config, report, fault_reasons
+    )
 
 
 def load_environmental_dataset(

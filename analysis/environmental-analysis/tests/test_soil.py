@@ -291,5 +291,109 @@ class PostEventDynamicsTests(unittest.TestCase):
         self.assertIsNone(dynamics.peak_counts)
 
 
+class AttributionWindowBoundsTests(unittest.TestCase):
+    """Audit SOIL-01: attributed magnitudes stay inside the attribution window.
+
+    The verdict was already gated on ``max_response_delay_hours`` after the
+    event ends. The reported magnitude was not, so a larger deviation belonging
+    to a later, unrelated weather system could be published as this event's
+    response. On the historical record ``wetting-2025-11-16T06:12-0400``
+    reported a peak 24.4 h after the event start against its own 19.1 h limit.
+    """
+
+    #: The diurnal adjuster is switched off in these fixtures on purpose. A
+    #: synthetic step of this size contaminates the hour-of-day profile it is
+    #: subtracted against, which is a property of the adjuster, not of the
+    #: attribution window these tests exist to pin down.
+    CONFIG = EnvironmentalConfig().with_overrides(
+        soil=SoilResponseConfig(apply_diurnal_adjustment=False)
+    )
+
+    def analyse(self, dataset, interval, config=None):
+        settings = config or self.CONFIG.soil
+        return analyze_soil_response(
+            dataset, interval, build_soil_context(dataset, settings), settings
+        )
+
+    def build_with_late_peak(self):
+        """A modest in-window response, then a much larger peak far too late."""
+        onset = DRY_BEFORE + WET_SAMPLES + 6        # half an hour after the end
+        # max_response_delay_hours defaults to 12 h = 144 samples at 5 minutes.
+        late = DRY_BEFORE + WET_SAMPLES + 200       # ~16.7 h after the end
+        def soil(index):
+            if index >= late:
+                return 1900.0 + 1500.0              # the un-attributable peak
+            if index >= onset:
+                return 1900.0 + 300.0               # the attributable response
+            return 1900.0
+        return build(soil, config=self.CONFIG)
+
+    def test_attributed_peak_ignores_a_larger_peak_outside_the_window(self):
+        dataset, interval = self.build_with_late_peak()
+        response = self.analyse(dataset, interval)
+        self.assertIs(response.status, SoilResponseStatus.DETECTED)
+        # The attributed magnitude is the in-window one, not the later giant.
+        self.assertAlmostEqual(response.response_counts, 300.0, delta=60.0)
+        self.assertLess(response.response_counts, 1000.0)
+
+    def test_attributed_time_to_peak_is_inside_the_attribution_window(self):
+        dataset, interval = self.build_with_late_peak()
+        response = self.analyse(dataset, interval)
+        limit = (
+            interval.duration_minutes
+            + dataset.config.soil.max_response_delay_hours * 60.0
+        )
+        self.assertLessEqual(response.time_to_peak_minutes, limit)
+
+    def test_the_later_peak_is_still_available_as_context(self):
+        dataset, interval = self.build_with_late_peak()
+        response = self.analyse(dataset, interval)
+        self.assertGreater(response.context_peak_deviation_counts, 1000.0)
+        self.assertGreater(
+            response.context_time_to_peak_minutes, response.time_to_peak_minutes
+        )
+        self.assertEqual(
+            response.context_window_hours,
+            dataset.config.soil.post_event_window_hours,
+        )
+
+    def test_context_and_attributed_agree_when_the_peak_is_in_window(self):
+        dataset, interval = build(
+            lambda index: 1900.0 + (400.0 if index >= DRY_BEFORE + 6 else 0.0),
+            config=self.CONFIG,
+        )
+        response = self.analyse(dataset, interval)
+        self.assertAlmostEqual(
+            response.response_counts, response.context_peak_deviation_counts
+        )
+        self.assertAlmostEqual(
+            response.time_to_peak_minutes, response.context_time_to_peak_minutes
+        )
+
+    def test_relative_change_derives_from_the_attributed_peak(self):
+        dataset, interval = self.build_with_late_peak()
+        response = self.analyse(dataset, interval)
+        self.assertAlmostEqual(
+            response.relative_change,
+            response.response_counts / response.baseline_counts,
+        )
+
+    def test_not_detected_evidence_names_both_windows(self):
+        # A single late giant with nothing attributable: the verdict must be
+        # NOT_DETECTED and the evidence must not present the late peak as this
+        # event's response.
+        late = DRY_BEFORE + WET_SAMPLES + 200
+        dataset, interval = build(
+            lambda index: 1900.0 + (1500.0 if index >= late else 0.0),
+            config=self.CONFIG,
+        )
+        response = self.analyse(dataset, interval)
+        self.assertIs(response.status, SoilResponseStatus.NOT_DETECTED)
+        text = " ".join(item.statement for item in response.evidence)
+        self.assertIn("attributed to this event", text)
+        self.assertGreater(response.context_peak_deviation_counts, 1000.0)
+        self.assertLess(abs(response.response_counts), 1000.0)
+
+
 if __name__ == "__main__":
     unittest.main()

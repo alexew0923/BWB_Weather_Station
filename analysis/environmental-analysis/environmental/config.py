@@ -95,6 +95,57 @@ class QualityConfig:
     #: stored zero predates that behaviour and may be a sentinel rather than a
     #: measurement. Zeros are excluded from soil analysis and counted.
     treat_soil_zero_as_invalid: bool = True
+    #: --- device fault signatures -------------------------------------------
+    #:
+    #: Kept deliberately separate from PLAUSIBLE_RANGES. A plausible range says
+    #: "outside this, the number cannot be a measurement of this quantity". This
+    #: says something narrower and different: "this frame carries the pattern a
+    #: known instrument emits when it has failed". A value can be inside every
+    #: physical range and still be a fault code, which is exactly the case here.
+    #:
+    #: Humidity values the SHT4x emits on this station when it fails. These are
+    #: observed at THIS station, not a physical bound -- relative humidity near
+    #: zero is attainable in other environments, so this is not a plausibility
+    #: rule and must not be reused as one.
+    #:
+    #: The evidence, over all 24 835 rows of the historical record:
+    #:
+    #:     humidity 1.97 -> 74 rows; temperature is 0.00 on 36, absent on 38,
+    #:                      and anything else on ZERO of them
+    #:     humidity 0.00 -> 16 rows; temperature is 0.00 on 15
+    #:
+    #: The 1.97 population splits cleanly in time: temperature is stored as 0.00
+    #: until 2026-04-08 07:54 and absent from 2026-04-08 14:11 onward, and the
+    #: last stored temperature zero anywhere in the record is 2026-04-08
+    #: 07:54:23. That is one fault recorded under two ingestion regimes -- the
+    #: Apps Script began blanking temperature zeros inside that window, so the
+    #: fault's temperature half stopped reaching the sheet while its humidity
+    #: half carried on. Hence "temperature is 0.00 OR absent" below.
+    sht4x_fault_humidity_values: tuple = (0.0, 1.97)
+    #: When True, a frame whose humidity matches one of the values above AND
+    #: whose temperature is either exactly zero or missing has BOTH SHT4x
+    #: channels excluded from analysis and counted.
+    #:
+    #: The pairing is required on purpose. A legitimate 0.00 degC reading with a
+    #: plausible humidity beside it stays valid -- winter zeros are real here --
+    #: and a low humidity reading on its own is NOT evidence of a device fault.
+    treat_sht4x_fault_frames_as_invalid: bool = True
+    #: A second, more specific signature: temperature, humidity AND pressure all
+    #: reading exactly zero at once. That is two independent parts (the SHT4x
+    #: and the BMP280) returning zero in the same frame, which no environmental
+    #: state produces.
+    #:
+    #: The evidence: 15 rows, all inside 2025-11-17 12:25-14:58, carrying boot
+    #: counter values restarted at 2, 3, 4, 6, 14, 24 ... -- i.e. immediately
+    #: after a power-loss reboot, which is exactly when an unchecked sensor
+    #: initialisation leaves the drivers returning zero. The whole frame's
+    #: environmental channels are excluded, pressure included.
+    #:
+    #: Checked BEFORE the SHT4x rule because it is the more specific of the two
+    #: and gives the more accurate reason: all 15 of these rows also match the
+    #: SHT4x signature, and attributing them to one failed part would understate
+    #: what happened.
+    treat_multi_sensor_zero_frames_as_invalid: bool = True
 
 
 @dataclass(frozen=True)

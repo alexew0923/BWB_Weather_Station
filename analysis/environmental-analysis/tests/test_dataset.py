@@ -1,6 +1,7 @@
 """Stage 2: canonicalisation, schema validation and quality masking."""
 
 import unittest
+from dataclasses import replace
 from datetime import datetime, timedelta
 
 import pandas as pd
@@ -9,7 +10,11 @@ from tests.support import HEADER, START, csv_text, dataset_from, row, series_csv
 
 from environmental import sensors
 from environmental.config import EnvironmentalConfig, IngestionConfig
-from environmental.dataset import build_dataset_from_csv_text
+from environmental.dataset import (
+    MULTI_SENSOR_FAULT,
+    SHT4X_FAULT,
+    build_dataset_from_csv_text,
+)
 from environmental.errors import EmptyDatasetError, SchemaError, SourceFormatError
 
 
@@ -203,6 +208,223 @@ class DatasetShapeTests(unittest.TestCase):
             config=config,
         )
         self.assertEqual(dataset.frame[sensors.TEMPERATURE].iloc[0], 20.0)
+
+
+class SHT4xFaultSignatureTests(unittest.TestCase):
+    """The device fault signature observed at this station (audit ENV-01).
+
+    Fixtures reproduce the real pathology from the historical record rather
+    than an invented one:
+
+      * ``(0.00 degC, 1.97 %)`` -- 36 rows, 2026-04-02 to 2026-04-08 07:54
+      * ``(missing, 1.97 %)``   -- 38 rows, 2026-04-08 14:11 onward, after the
+        ingestion script began blanking temperature zeros
+      * ``(0.00 degC, 0.00 %)`` -- 15 rows, 2025-11-17
+      * ``(23.08 degC, 0.00 %)`` -- 1 row; deliberately NOT a fault frame
+
+    In all 90 fault occurrences the temperature half is either exactly zero or
+    absent, never a plausible reading.
+    """
+
+    def test_zero_temperature_with_fault_humidity_invalidates_both(self):
+        dataset = dataset_from(csv_text([row(START, temperature=0.0, humidity=1.97)]))
+        self.assertEqual(dataset.report.sensor_fault_frames, 1)
+        self.assertEqual(dataset.valid_count(sensors.TEMPERATURE), 0)
+        self.assertEqual(dataset.valid_count(sensors.HUMIDITY), 0)
+
+    def test_missing_temperature_with_fault_humidity_invalidates_humidity(self):
+        # The post-blanking form: the ingestion script removed the temperature
+        # half of the same fault, so only the humidity half reaches the sheet.
+        dataset = dataset_from(csv_text([row(START, temperature=None, humidity=1.97)]))
+        self.assertEqual(dataset.report.sensor_fault_frames, 1)
+        self.assertEqual(dataset.valid_count(sensors.HUMIDITY), 0)
+
+    def test_zero_temperature_with_zero_humidity_is_a_fault_frame(self):
+        dataset = dataset_from(csv_text([row(START, temperature=0.0, humidity=0.0)]))
+        self.assertEqual(dataset.report.sensor_fault_frames, 1)
+        self.assertEqual(dataset.valid_count(sensors.TEMPERATURE), 0)
+        self.assertEqual(dataset.valid_count(sensors.HUMIDITY), 0)
+
+    def test_a_genuine_zero_celsius_reading_survives(self):
+        # Freezing point with an ordinary humidity beside it is weather, not a
+        # fault. This is the reading the rule exists to protect.
+        dataset = dataset_from(csv_text([row(START, temperature=0.0, humidity=86.4)]))
+        self.assertEqual(dataset.report.sensor_fault_frames, 0)
+        self.assertEqual(dataset.valid_count(sensors.TEMPERATURE), 1)
+        self.assertEqual(dataset.valid_count(sensors.HUMIDITY), 1)
+
+    def test_freezing_temperature_with_plausible_humidity_stays_valid(self):
+        # The spec case: 0.0 degC is ordinary winter weather here and must
+        # survive across the whole plausible humidity range.
+        for humidity in (75.0, 40.0, 86.4, 100.0):
+            with self.subTest(humidity=humidity):
+                dataset = dataset_from(
+                    csv_text([row(START, temperature=0.0, humidity=humidity)])
+                )
+                self.assertEqual(dataset.report.sensor_fault_frames, 0)
+                self.assertEqual(dataset.valid_count(sensors.TEMPERATURE), 1)
+                self.assertEqual(dataset.valid_count(sensors.HUMIDITY), 1)
+
+    def test_a_very_low_humidity_that_is_not_a_fault_code_is_kept(self):
+        # Proves this is a signature rule and not a "low humidity is
+        # impossible" rule: 3.5 % is lower than one of the fault codes and is
+        # still admitted, because nothing pairs with it.
+        dataset = dataset_from(csv_text([row(START, temperature=12.0, humidity=3.5)]))
+        self.assertEqual(dataset.report.sensor_fault_frames, 0)
+        self.assertEqual(dataset.valid_count(sensors.HUMIDITY), 1)
+
+    def test_a_fault_code_humidity_with_a_plausible_temperature_is_kept(self):
+        # 1.97 alone, beside a real temperature, is not the signature.
+        dataset = dataset_from(csv_text([row(START, temperature=12.0, humidity=1.97)]))
+        self.assertEqual(dataset.report.sensor_fault_frames, 0)
+        self.assertEqual(dataset.valid_count(sensors.HUMIDITY), 1)
+
+    def test_low_humidity_alone_is_not_treated_as_a_device_fault(self):
+        # Without the paired temperature signature there is no evidence of a
+        # device fault, so the engine must not invent one. Physical
+        # plausibility is a separate concern and does not exclude this value.
+        dataset = dataset_from(csv_text([row(START, temperature=23.08, humidity=0.0)]))
+        self.assertEqual(dataset.report.sensor_fault_frames, 0)
+        self.assertEqual(dataset.valid_count(sensors.TEMPERATURE), 1)
+        self.assertEqual(dataset.valid_count(sensors.HUMIDITY), 1)
+
+    def test_ordinary_humidity_with_zero_temperature_is_not_a_fault(self):
+        dataset = dataset_from(csv_text([row(START, temperature=0.0, humidity=1.97)]))
+        self.assertEqual(dataset.report.sensor_fault_frames, 1)
+        other = dataset_from(csv_text([row(START, temperature=0.0, humidity=2.5)]))
+        self.assertEqual(other.report.sensor_fault_frames, 0)
+
+    def test_fault_detection_is_configurable(self):
+        config = EnvironmentalConfig()
+        config = config.with_overrides(
+            quality=replace(
+                config.quality, treat_sht4x_fault_frames_as_invalid=False
+            )
+        )
+        dataset = dataset_from(
+            csv_text([row(START, temperature=0.0, humidity=1.97)]), config=config
+        )
+        self.assertEqual(dataset.report.sensor_fault_frames, 0)
+        self.assertEqual(dataset.valid_count(sensors.HUMIDITY), 1)
+
+    def test_fault_frames_are_masked_not_deleted(self):
+        # Same convention as every other quality rule: the row still arrived,
+        # so it still counts towards delivery completeness.
+        dataset = dataset_from(
+            csv_text([
+                row(START, temperature=0.0, humidity=1.97),
+                row(START + timedelta(minutes=5), temperature=11.0, humidity=80.0),
+            ])
+        )
+        self.assertEqual(len(dataset), 2)
+        self.assertEqual(dataset.report.sensor_fault_frames, 1)
+        self.assertEqual(dataset.valid_count(sensors.TEMPERATURE), 1)
+
+    def test_fault_count_is_reported_and_serialisable(self):
+        dataset = dataset_from(csv_text([row(START, temperature=0.0, humidity=1.97)]))
+        report = dataset.report.to_dict()
+        self.assertEqual(report["sensor_fault_frames"], 1)
+        self.assertEqual(
+            report["sensor_fault_signatures"], {SHT4X_FAULT: 1}
+        )
+        self.assertTrue(any(SHT4X_FAULT in note for note in dataset.report.notes))
+
+    def test_the_reason_code_is_recorded_per_row(self):
+        dataset = dataset_from(
+            csv_text([
+                row(START, temperature=0.0, humidity=1.97),
+                row(START + timedelta(minutes=5), temperature=11.0, humidity=80.0),
+            ])
+        )
+        self.assertEqual(list(dataset.fault_reasons), [SHT4X_FAULT, ""])
+
+    def test_raw_values_are_preserved_for_a_fault_frame(self):
+        # Masked, never mutated: the export must still reconcile against the
+        # source, and a defect has to stay countable.
+        dataset = dataset_from(csv_text([row(START, temperature=0.0, humidity=1.97)]))
+        self.assertEqual(dataset.frame[sensors.HUMIDITY].iloc[0], 1.97)
+        self.assertEqual(dataset.frame[sensors.TEMPERATURE].iloc[0], 0.0)
+        self.assertTrue(pd.isna(dataset.series(sensors.HUMIDITY).iloc[0]))
+
+
+class MultiSensorFaultSignatureTests(unittest.TestCase):
+    """Audit ENV-01: temperature, humidity and pressure all zero together.
+
+    Fifteen rows in the historical record carry this, all inside
+    2025-11-17 12:25-14:58 with the boot counter restarted at 2, 3, 4, 6, 14 --
+    i.e. immediately after a power-loss reboot. Two independent parts reporting
+    exactly zero in the same frame is an instrument failure, not weather.
+    """
+
+    def test_all_three_zero_is_a_multi_sensor_fault(self):
+        dataset = dataset_from(
+            csv_text([row(START, temperature=0.0, humidity=0.0, pressure=0.0)])
+        )
+        self.assertEqual(
+            dataset.report.sensor_fault_signatures, {MULTI_SENSOR_FAULT: 1}
+        )
+        self.assertEqual(list(dataset.fault_reasons), [MULTI_SENSOR_FAULT])
+
+    def test_pressure_is_excluded_too(self):
+        dataset = dataset_from(
+            csv_text([row(START, temperature=0.0, humidity=0.0, pressure=0.0)])
+        )
+        for channel in (sensors.TEMPERATURE, sensors.HUMIDITY, sensors.PRESSURE):
+            self.assertEqual(dataset.valid_count(channel), 0)
+
+    def test_the_more_specific_signature_wins(self):
+        # This frame matches the SHT4x pair as well; the reason recorded must be
+        # the multi-sensor one, because blaming a single part would understate
+        # what failed.
+        dataset = dataset_from(
+            csv_text([row(START, temperature=0.0, humidity=0.0, pressure=0.0)])
+        )
+        self.assertNotIn(SHT4X_FAULT, dataset.report.sensor_fault_signatures)
+
+    def test_other_devices_on_the_frame_are_untouched(self):
+        dataset = dataset_from(
+            csv_text([
+                row(START, temperature=0.0, humidity=0.0, pressure=0.0,
+                    wetness=4095.0, soil=1900.0)
+            ])
+        )
+        self.assertEqual(dataset.valid_count(sensors.WETNESS_SIGNAL), 1)
+        self.assertEqual(dataset.valid_count(sensors.SOIL_SIGNAL), 1)
+
+    def test_two_zeros_without_the_third_are_not_a_multi_sensor_fault(self):
+        # Temperature and humidity zero with a plausible pressure is the SHT4x
+        # signature, not the whole-frame one.
+        dataset = dataset_from(
+            csv_text([row(START, temperature=0.0, humidity=0.0, pressure=1010.0)])
+        )
+        self.assertEqual(
+            dataset.report.sensor_fault_signatures, {SHT4X_FAULT: 1}
+        )
+        self.assertEqual(dataset.valid_count(sensors.PRESSURE), 1)
+
+    def test_multi_sensor_detection_is_configurable(self):
+        config = EnvironmentalConfig()
+        config = config.with_overrides(
+            quality=replace(
+                config.quality, treat_multi_sensor_zero_frames_as_invalid=False
+            )
+        )
+        dataset = dataset_from(
+            csv_text([row(START, temperature=0.0, humidity=0.0, pressure=0.0)]),
+            config=config,
+        )
+        # Falls back to the SHT4x signature, which still matches this frame.
+        self.assertEqual(
+            dataset.report.sensor_fault_signatures, {SHT4X_FAULT: 1}
+        )
+
+    def test_other_channels_on_a_fault_frame_are_untouched(self):
+        # Only the SHT4x pair is excluded; the wetness channel on the same row
+        # comes from a different device and is still a reading.
+        dataset = dataset_from(
+            csv_text([row(START, temperature=0.0, humidity=1.97, wetness=4095.0)])
+        )
+        self.assertEqual(dataset.valid_count(sensors.WETNESS_SIGNAL), 1)
 
 
 if __name__ == "__main__":

@@ -245,6 +245,48 @@ class GapClassificationTests(unittest.TestCase):
         self.assertEqual(
             classify_gap(424.0, start, end), "scheduled overnight shutdown")
 
+    def test_overnight_shape_before_the_changeover_is_a_real_outage(self):
+        """Audit RELY-01.
+
+        The station ran 24 h a day until 2026-04-21, so an overnight-shaped gap
+        before then is a fault. Classifying it as "scheduled" excused nine real
+        gaps totalling 20.6 h on the historical record, seven of them in
+        February 2026 -- the sparsest month in the whole deployment.
+        """
+        start, end = local("2026-02-09 23:41:00"), local("2026-02-10 03:34:00")
+        self.assertEqual(classify_gap(233.2, start, end), "major")
+
+    def test_short_overnight_gap_before_the_changeover_keeps_its_severity(self):
+        # 94.3 min sits between GAP_MINOR (30) and GAP_MODERATE (120), so the
+        # real 2026-02-06 gap is a moderate outage rather than expected silence.
+        start, end = local("2026-02-06 23:08:00"), local("2026-02-07 00:43:00")
+        self.assertEqual(classify_gap(94.3, start, end), "moderate")
+
+    def test_same_shape_after_the_changeover_is_scheduled(self):
+        start, end = local("2026-06-09 23:41:00"), local("2026-06-10 03:34:00")
+        self.assertEqual(
+            classify_gap(233.2, start, end), "scheduled overnight shutdown")
+
+    def test_changeover_night_is_scheduled_from_the_regime_at_either_end(self):
+        """The first genuine shutdown starts under the old regime.
+
+        2026-04-20 is still continuous and 2026-04-21 is not, so a gap that
+        begins on the evening of the 20th and ends on the morning of the 21st
+        must be recognised -- which is why both ends are checked.
+        """
+        start, end = local("2026-04-20 22:58:00"), local("2026-04-21 06:04:00")
+        self.assertEqual(
+            classify_gap(426.0, start, end), "scheduled overnight shutdown")
+
+    def test_regime_continuity_comes_from_the_authoritative_schedule(self):
+        self.assertTrue(regime_for(date(2026, 2, 9)).is_continuous)
+        self.assertFalse(regime_for(date(2026, 4, 21)).is_continuous)
+
+    def test_daytime_gap_is_never_scheduled_under_either_regime(self):
+        for day in ("2026-02-09", "2026-06-09"):
+            start, end = local(f"{day} 12:00:00"), local(f"{day} 15:00:00")
+            self.assertEqual(classify_gap(180.0, start, end), "major")
+
     def test_overnight_gap_costs_no_missed_transmissions(self):
         stamps = (every_five_minutes("2026-05-01 22:47:00", 3)
                   + every_five_minutes("2026-05-02 06:00:00", 3))

@@ -11,6 +11,7 @@ from audit_config import (
     NIGHTLY_SHUTDOWN_END_HOUR,
     NIGHTLY_SHUTDOWN_MAX_MINUTES,
     NIGHTLY_SHUTDOWN_START_HOUR,
+    regime_for,
     scheduled_transmissions_between,
 )
 
@@ -31,8 +32,18 @@ def classify_gap(minutes, starts_at, ends_at):
 
     # Scheduled building power-down: evening -> next morning, roughly 7 h.
     # Checked before severity so it never inflates the outage count.
+    #
+    # Gated on the operating regime as well as on shape. The station ran 24 h a
+    # day until the changeover, so an overnight-shaped gap before it is a real
+    # fault, not the building being switched off, and calling it "scheduled"
+    # excuses exactly the outages the audit exists to find. The regime comes
+    # from OPERATING_REGIMES via regime_for() -- the one authoritative schedule
+    # -- and is checked at BOTH ends of the gap so the changeover night itself,
+    # which begins under the old regime and ends under the new one, is still
+    # recognised as the first genuine shutdown.
     if (
-        starts_at.hour >= NIGHTLY_SHUTDOWN_START_HOUR
+        _shutdown_is_scheduled(starts_at, ends_at)
+        and starts_at.hour >= NIGHTLY_SHUTDOWN_START_HOUR
         and ends_at.hour <= NIGHTLY_SHUTDOWN_END_HOUR
         and minutes <= NIGHTLY_SHUTDOWN_MAX_MINUTES
     ):
@@ -45,6 +56,14 @@ def classify_gap(minutes, starts_at, ends_at):
     if minutes <= GAP_MAJOR_MINUTES:
         return "major"
     return "critical"
+
+
+def _shutdown_is_scheduled(starts_at, ends_at):
+    """True when a nightly shutdown was in force at either end of a gap."""
+    return not (
+        regime_for(starts_at.date()).is_continuous
+        and regime_for(ends_at.date()).is_continuous
+    )
 
 
 def missed_transmissions(start, end):

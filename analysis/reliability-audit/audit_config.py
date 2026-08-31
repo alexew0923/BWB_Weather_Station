@@ -67,6 +67,15 @@ class OperatingRegime:
         self.active_end_hour = active_end_hour
         self.label = label
 
+    @property
+    def is_continuous(self):
+        """True when this regime powers the station for the whole day.
+
+        Read from the table above rather than restated, so there is still
+        exactly one definition of the schedule in this repository.
+        """
+        return self.active_start_hour == 0 and self.active_end_hour >= 24
+
     def window_for(self, day):
         """The powered window on ``day`` as an aware (open, close) pair."""
         open_at = datetime.combine(day, time(self.active_start_hour))
