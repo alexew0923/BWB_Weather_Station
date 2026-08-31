@@ -1,0 +1,14 @@
+# The environmental analysis engine. Deliberately the same three packages the
+# sibling analysis projects already use -- no new runtime dependency is
+# introduced by this subsystem.
+#
+# HTTP, CSV, timezones and .env parsing use the standard library, as they do in
+# stationwatch-live. SciPy is NOT used: the only curve fitting in the engine is
+# linear least squares plus a deterministic grid search, both of which NumPy
+# does, and a deterministic grid keeps repeated runs bit-identical.
+#
+# matplotlib is needed only by environmental/plots.py, which is optional and
+# imported lazily; the analysis path never touches it.
+pandas>=2.0
+numpy>=1.24
+matplotlib>=3.7

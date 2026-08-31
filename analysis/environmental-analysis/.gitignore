@@ -1,0 +1,13 @@
+# Local configuration: the real telemetry URLs never belong in Git.
+.env
+.env.*
+!.env.example
+
+# Generated analysis artefacts.
+output/
+*.png
+*.csv
+
+__pycache__/
+*.py[cod]
+.venv/
