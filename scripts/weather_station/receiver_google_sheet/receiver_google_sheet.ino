@@ -1,3 +1,4 @@
+//Make sure to paste Google Script ID on line 25. It is deleted on GitHub for security purpose.
 #include "Wire.h"
 #include "WiFi.h"
 #include <HTTPClient.h>
@@ -21,7 +22,7 @@ const char* ssid = "HighSchool_Public"; //change SSID (WiFi name)
 const char* password = "love2learn"; //change password
 
 // Google script ID and required credentials
-String GOOGLE_SCRIPT_ID = "paste your Google Script ID here"; //change Gscript ID found in Apps Script
+String GOOGLE_SCRIPT_ID = "Enter Google Script ID here"; //change Gscript ID
 
 void onReceive(int len) {
   Serial.printf("onReceive[%d]: ", len);
