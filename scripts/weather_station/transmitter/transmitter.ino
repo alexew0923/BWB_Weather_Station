@@ -36,7 +36,7 @@ void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
 }
 
 void setup() {
-  //Serial.begin(115200);  //uncomment serial print lines when debugging
+  //Serial.begin(115200);  //Serial does not work for this ESP32
   Wire.begin(6, 7);
   sht4.begin(&Wire);
   sht4.setPrecision(SHT4X_HIGH_PRECISION);
@@ -91,7 +91,7 @@ void sensor() {
   data.pressure = bmp.readPressure() / 100.0;
   
   digitalWrite(TRANSISTOR_PIN, LOW);
-  delay(10);
+  delay(5);
   data.rain = analogRead(RAIN_SENSOR_PIN);
   data.soil = analogRead(SOIL_SENSOR_PIN);
   digitalWrite(TRANSISTOR_PIN, HIGH);
