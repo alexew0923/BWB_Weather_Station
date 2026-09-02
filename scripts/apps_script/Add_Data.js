@@ -18,7 +18,7 @@ function doGet(e){ //executed when the receiver sends the URL
 
   const values = [[time, temp, hum, soil, air, rain, battery, count]];
   for (let i = 1; i < 7; i++) {
-    if (isNaN(values[0][i]) || values[0][i] == 0) { //check for NaN values and 0 for every other data except the temperature
+    if (isNaN(values[0][i]) || i > 1 && values[0][i] == 0) { //check for NaN values and 0 for every other data except the temperature
       values[0][i] = ""; //if that is the case, set the value to empty
     }
   }
